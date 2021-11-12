@@ -1,0 +1,17 @@
+librosa
+methodtools
+mirdata
+music21
+natsort
+nicecache
+numpy
+pebble
+pyrubberband
+seaborn
+sklearn
+tensorflow
+tensorflowjs
+torchaudio
+tqdm
+transitions
+wandb
