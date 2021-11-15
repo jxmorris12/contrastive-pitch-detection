@@ -13,7 +13,7 @@ from wandb.keras import WandbCallback # https://docs.wandb.com/library/integrati
 
 from augmenter import Augmenter
 from callbacks import LogRecordingSpectrogramCallback, VisualizePredictionsCallback
-from dataloader import GuitarDataLoader, dataset_load_funcs
+from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator, AudioCombinationGenerator
 from models import CREPE
 from metrics import (
@@ -164,7 +164,7 @@ def main():
     #
     label_format = 'categorical'
     
-    data_loader = GuitarDataLoader(sample_rate, frame_length, 
+    data_loader = MusicDataLoader(sample_rate, frame_length, 
         datasets=args.datasets,
         batch_by_track=args.lstm,
         val_split=args.val_split,

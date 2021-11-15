@@ -1,40 +1,10 @@
 import numpy as np
-import keras
+from tensorflow import keras
 import random
 
 from utils import TrackFrameSampler
 
 np.seterr(divide='ignore', invalid='ignore')
-
-class AudioCombinationGenerator(keras.utils.Sequence):
-    """Samples multiple instances from a provided generator and combines them. 
-    """
-    def __init__(self, audio_generator):
-        self.audio_generator = audio_generator
-    
-    def __len__(self):
-        return len(self.audio_generator)
-    
-    def __getitem__(self, i):
-        x1, y1 = self.audio_generator[i]
-        x2, y2 = random.choice(self.audio_generator)
-        aug_x = x1 + x2
-        aug_y = np.logical_or(y1,y2).astype(y1.dtype)
-        return aug_x, aug_y
-
-    def on_epoch_end(self):
-        """ Re-shuffle examples after each epoch. """
-        self.audio_generator.on_epoch_end()
-    
-    def _callable(self, num_epochs):
-        """ TensorFlow tf.data.Dataset.from_generator is overly picky about
-        parameters. See https://stackoverflow.com/questions/49280016/how-to-make-a-generator-callable
-        """
-        def gen():
-            for _ in range(num_epochs):
-                for x,y in self:
-                    yield x,y
-        return gen
 
 class AudioDataGenerator(keras.utils.Sequence):
     """ Generates data for Keras. Enables on-the-fly augmentation and such.
@@ -191,12 +161,12 @@ class AudioDataGenerator(keras.utils.Sequence):
 
 if __name__ == '__main__':
     import random
-    from dataloader import GuitarDataLoader
+    from dataloader import MusicDataLoader
     
     sr = 8000   # sample rate
     n = 512     # sample length
     
-    data_loader = GuitarDataLoader(sr, n, 
+    data_loader = MusicDataLoader(sr, n, 
         min_midi=25, max_midi=85,
         label_format="categorical",
         datasets=['idmt_tiny'],

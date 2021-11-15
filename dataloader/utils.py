@@ -1,23 +1,6 @@
-import collections
 import functools
-import glob
-import interlap
-import json
-import math
-import nicecache
-import numpy as np
-import os
-import pickle
-import random
-import torchaudio
-import tqdm
-
-from utils import midi_vals_to_categorical, midi_vals_to_midi_array, hz_to_midi, midi_to_hz
-
-import librosa
 import methodtools
-from mirdata import guitarset
-import scipy.signal as sps
+import numpy as np
 
 class AnnotatedAudioChunk:
     """ An audio snippet. Consists of an audio sample, frequency annnotations,
@@ -177,7 +160,7 @@ class Track:
             return []
         
         
-class GuitarDataLoader:
+class MusicDataLoader:
     """ Loads audio data. 
     
         - ``sample_rate`` is in Hz
@@ -212,7 +195,7 @@ class GuitarDataLoader:
     def get_tracks(self):
         tracks = []
         for dataset in self.datasets:
-            print(f'--> GuitarDataLoader loading dataset {dataset}')
+            print(f'--> MusicDataLoader loading dataset {dataset}')
             if dataset not in dataset_load_funcs:
                 raise ValueError(f'Unknown dataset {dataset}')
             tracks += dataset_load_funcs[dataset]()
@@ -236,9 +219,13 @@ class GuitarDataLoader:
         
         if self.shuffle_tracks: 
             random.shuffle(tracks)
+
+        if self.val_split == 0.0:
+            # Optionally don't split into train and validation.
+            return tracks
         
         # Split into train and val data
-        # (doing this perfectly is a DP problem, but we can approximate
+        # (doing this perfectly is a hard problem, but we can approximate
         # the solution effectively using a greedy algorithm, especially if
         # our training data is plentiful and track size is somewhat uniform)
         train_tracks, val_tracks = [], []
@@ -257,196 +244,34 @@ class GuitarDataLoader:
         
         # Flatten out, if not batch by track
         print(f'Observed val split {len_val_tracks / total_len_tracks} for desired val split {self.val_split:.2f}')
-        print(f'GuitarDataLoader loaded {total_len_tracks / self.sample_rate:.2f}s worth of audio')
+        print(f'MusicDataLoader loaded {total_len_tracks / self.sample_rate:.2f}s worth of audio')
         
         return train_tracks, val_tracks
 
-def load_idmt_tiny():
-    return load_idmt(perc=0.05)
+@functools.lru_cache
+def hz_to_midi(f):
+    if f == 0: 
+        return 0
+    else:
+        return 69.0 + 12.0 * math.log2(f / 440.0)
 
-def load_idmt(perc=None, root_dir='/p/qdata/jm8wx/other/audio/data/IDMT-SMT-GUITAR_V2/'):
-    """ Loads the IDMT-ST dataset. Returns List<Track>. """
-    import xml.etree.ElementTree as ElementTree
-    # TODO support datasets 3,4
-    # wav_files = sorted(glob.glob(os.path.join(root_dir, 'dataset1/*/audio/*')) + glob.glob(os.path.join(root_dir, 'dataset2/audio/*')))
-    wav_files = sorted(glob.glob(os.path.join(root_dir, 'dataset*/**/audio/*.wav'), recursive=True))
-    # xml_files = sorted(glob.glob(os.path.join(root_dir, 'dataset1/*/annotation/*')) + glob.glob(os.path.join(root_dir, 'dataset2/annotation/*')))
-    xml_files = sorted(glob.glob(os.path.join(root_dir, 'dataset*/**/annotation/*.xml'), recursive=True))
-    
-    wav_files = [f for f in wav_files if 'dataset4' not in f] # TODO: Process dataset4 audio from csv
-    xml_files = [f for f in xml_files if 'dataset4' not in f]
-    if not wav_files: 
-        raise FileNotFoundError('no audio files found!')
-    
-    if perc:
-        new_num_samples = int(len(wav_files) * perc)
-        wav_files = wav_files[:new_num_samples]
-        xml_files = xml_files[:new_num_samples]
-    
-    tracks = []
-    total_length = 0
-    total_audio_s = 0
-    for wav_file, xml_file in zip(wav_files, xml_files):
-        root = ElementTree.parse(xml_file).getroot()
-        # load audio file 
-        raw_waveform, sample_rate = torchaudio.load(wav_file)  # load tensor from file
-        raw_waveform = raw_waveform.squeeze().numpy()
-        total_audio_s += len(raw_waveform) / sample_rate
-        # load annotations
-        num_annotations = len(root.findall('transcription/event/pitch'))
-        samples = []
-        for i in range(num_annotations):
-            # obj['audio_file_name'] = wav_file
-            midi = int(root.findall('transcription/event/pitch')[i].text)
-            pitch = midi_to_hz(midi)
-            onset = float(root.findall('transcription/event/onsetSec')[i].text)
-            offset = float(root.findall('transcription/event/offsetSec')[i].text)
-            fret_number = int(root.findall('transcription/event/fretNumber')[i].text)
-            string_number = int(root.findall('transcription/event/stringNumber')[i].text)
-            # get relevant part of waveform
-            start_sample_idx = int(onset * sample_rate)
-            end_sample_idx = int(offset * sample_rate)
-            # waveform_sample = raw_waveform[start_sample_idx:end_sample_idx]
-            new_sample = AnnotatedAudioChunk(start_sample_idx, end_sample_idx, sample_rate, [pitch], [fret_number], [string_number])
-            samples.append(new_sample)
-        total_length += sum((s.length_in_seconds for s in samples))
-        wav_file_short = wav_file
-        if 'IDMT-SMT-GUITAR_V2/' in wav_file_short:
-            # Shorten path from absolute system path to relative within dataset
-            # -- this prevents really long absolute paths from clogging up
-            # our data table
-            wav_file_short = wav_file_short[wav_file_short.index('IDMT-SMT-GUITAR_V2/'):]
-        track = Track('idmt', wav_file_short, samples, raw_waveform, sample_rate, name=xml_file)
-        tracks.append(track)
-    
-    # Return samples
-    print(f'IDMT Loaded {total_length:.2f}s of samples across all annotations ({total_audio_s:.2f}s of audio)')
-    return tracks
+hz_to_midi_v = np.vectorize(hz_to_midi)
 
-def load_guitarset():
-    """
-    Loads GuitarSet from the mirdata package. Returns List<Track>.
-    
-    To download:
-        >>> from mirdata import guitarset
-        >>> guitarset.download() # takes a few minutes
-    """
-    tracks = []
-    total_audio_s = 0
-    for track_id in tqdm.tqdm(guitarset.DATA.index.keys(), desc='Loading GuitarSet'):
-        track = guitarset.Track(track_id)
-        waveform, sample_rate = torchaudio.load(track.audio_mic_path)
-        waveform = waveform.flatten()
-        total_audio_s += len(waveform) / sample_rate
-        samples = []
-        for string_name, f0data in track.notes.items():
-            string_number = 6 - (['E', 'A', 'D', 'G', 'B', 'e'].index(string_name))
-            for start, end, midi in zip(f0data.start_times, f0data.end_times, f0data.notes):
-                string_numbers = [string_number]
-                freq = midi_to_hz(midi)
-                start_idx = int(start * sample_rate)
-                end_idx = int(end * sample_rate)
-                fret_numbers = [0] # TODO where in this data are the fret numbers?? Are they anywhere or must I infer them here?
-                this_waveform = waveform[start_idx : end_idx]
-                chunk = AnnotatedAudioChunk(
-                    start_idx, end_idx, sample_rate, [freq], fret_numbers, string_numbers,
-                )
-                samples.append(chunk)
-        track = Track('guitarset', track_id, samples, waveform, sample_rate, name=track_id)
-        tracks.append(track)
-    print(f'GuitarSet loaded {total_audio_s:.2f}s of audio ({len(tracks)} tracks)')
-    return tracks
+@functools.lru_cache
+def midi_to_hz(d):
+    exp = (d - 69) / 12.0
+    return (2 ** exp) * 440.0
 
-def load_nsynth(use_guitar=True, use_bass=False, use_acoustic_guitar=False, use_full_dataset=False, perc=None):
-    # TODO use multiprocessing for this and other data loaders.
-    # TODO or load nsynth from tensorflow_datasets?
-    json_files = [f'/p/qdata/jm8wx/other/audio/data/NSynth/nsynth-{folder}/examples.json' for folder in ('train', 'test')]
-    # Bad samples
-    bad_nsynth_insts = {
-        'guitar_acoustic_023',
-        'guitar_acoustic_025',
-        'guitar_acoustic_031',
-        'guitar_acoustic_036',
-    }
-    
-    tracks = []
-    total_length = 0
-    file_prefixes = collections.Counter()
-    for file in json_files:
-        data = json.loads(open(file).read())
-        folder = os.path.join(os.path.dirname(file))
-        for key in data.keys():
-            prefix = key[:key.find('_')]
-            file_prefixes[prefix] += 1
-        # data types: {'mallet', 'reed', 'string', 'brass', 'guitar', 'bass', 'vocal', 'flute', 'synth', 'organ', 'keyboard'}
-        sample_names = [sample_name for sample_name in sorted(data.keys()) 
-            if (('guitar_acoustic' in sample_name) and use_acoustic_guitar)
-            or (('guitar' in sample_name) and (use_guitar or use_full_dataset)) 
-            or (('bass' in sample_name) and (use_bass or use_full_dataset))
-            or (('string' in sample_name or 'synth' in sample_name or 'keyboard' in sample_name) and use_full_dataset)
-        ]
-        if perc:
-            assert 0 < perc <= 1, "percentage of NSynth to use must be on (0, 1]"
-            sample_names = sample_names[:int(perc * len(sample_names))]
-        for sample_name in tqdm.tqdm(sample_names, desc=f'Loading NSynth data from {file}'):
-            if sample_name in bad_nsynth_insts:
-                print(f'Skipping bad sample {sample_name}')
-                continue
-            wav_file = os.path.join(folder, 'audio', f'{sample_name}.wav')
-            raw_waveform, sample_rate = torchaudio.load(wav_file)
-            raw_waveform = raw_waveform.flatten()
-            # Trim leading and trailing silence.
-            if use_acoustic_guitar:
-                raw_waveform, trimmed_region = librosa.effects.trim(raw_waveform, top_db=20)
-            # TODO Fake string and fret number?
-            sample_json = data[sample_name]
-            midi = sample_json['pitch']
-            # sample_json: {
-            #   'qualities': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-            #   'pitch': 66, 'note': 72288, 
-            #   'instrument_source_str': 'acoustic', 
-            #   'velocity': 100, 'instrument_str': 'guitar_acoustic_010', 
-            #   'instrument': 219, 'sample_rate': 16000, 
-            #   'qualities_str': [], 'instrument_source': 0, 
-            #   'note_str': 'guitar_acoustic_010-066-100', 
-            #   'instrument_family': 3, 
-            #   'instrument_family_str': 'guitar'
-            #   }
-            pitch = midi_to_hz(midi)
-            new_sample = AnnotatedAudioChunk(
-                0, len(raw_waveform), 
-                sample_rate, 
-                [pitch], [0], [1]
-            )
-            total_length += new_sample.length_in_seconds
-            track = Track('nsynth', sample_name, [new_sample], raw_waveform, sample_rate, name=sample_name)
-            tracks.append(track)
-    print(f'NSynth file counts by prefix: {file_prefixes}')
-    print(f'NSynth loaded {total_length:.2f}s of audio ({len(tracks)} tracks)')
-    return tracks
-
-def load_nsynth_full():
-    return load_nsynth(use_full_dataset=True)
-
-def load_nsynth_piano():
-    raise NotImplementedError()
-
-def load_nsynth_acoustic_guitar():
-    return load_nsynth(use_guitar=False, use_bass=False, use_acoustic_guitar=True, use_full_dataset=False)
-
+from .nsynth_chords import *
 dataset_load_funcs = { 
-    'guitarset': load_guitarset, 
-    'idmt': load_idmt,
-    'idmt_tiny': load_idmt_tiny,
-    'nsynth': load_nsynth,
-    'nsynth_full': load_nsynth_full,
-    'nsynth_acoustic_guitar': load_nsynth_acoustic_guitar
-    'nsynth_piano': load_nsynth_piano,
+    # 'guitarset': load_guitarset, 
+    # 'idmt': load_idmt,
+    # 'idmt_tiny': load_idmt_tiny,
+    # 'nsynth': load_nsynth,
+    # 'nsynth_full': load_nsynth_full,
+    # 'nsynth_acoustic_guitar': load_nsynth_acoustic_guitar
+    # 'nsynth_piano': load_nsynth_piano,
+    'nsynth_chords_train': functools.partial(load_nsynth_chords, 'train'),
+    'nsynth_chords_valid': functools.partial(load_nsynth_chords, 'valid'),
+    'nsynth_chords_test':  functools.partial(load_nsynth_chords, 'test'),
 }
-
-
-if __name__ == '__main__':
-    # print('debug run - loading guitarset for profiling')
-    # load_guitarset()
-    print('debug run - loading NSynth acoustic guitar')
-    load_nsynth_acoustic_guitar()

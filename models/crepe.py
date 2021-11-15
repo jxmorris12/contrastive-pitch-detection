@@ -23,7 +23,7 @@ CREPE_MODEL_CAPACITIES = {
 }
 
 def CREPE(model_capacity, input_dim=1024, num_output_nodes=1, load_pretrained=False,
-  freeze_some_layers=False, add_intermediate_dense_layer=False, lstm=False,
+  freeze_some_layers=False, add_intermediate_dense_layer=False,
     add_dense_output=True, out_activation='sigmoid'):
     """
     Build the CNN model and load the weights
@@ -53,9 +53,6 @@ def CREPE(model_capacity, input_dim=1024, num_output_nodes=1, load_pretrained=Fa
     model : tensorflow.keras.models.Model
         The pre-trained keras model loaded in memory
     """
-    if lstm:
-        return CREPE_LSTM(model_capacity, input_dim=input_dim, num_output_nodes=num_output_nodes, load_pretrained=load_pretrained,
-                freeze_some_layers=freeze_some_layers, add_intermediate_dense_layer=add_intermediate_dense_layer,)
     
     assert model_capacity in CREPE_MODEL_CAPACITIES, f'unknown model capacity {model_capacity}'
     
