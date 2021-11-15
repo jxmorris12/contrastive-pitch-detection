@@ -65,15 +65,14 @@ def parse_args():
     return args
 
 def get_model(args):
-    from .models import CREPE
     return CREPE('medium', input_dim=args.frame_length, num_output_nodes=88, load_pretrained=False,
         freeze_some_layers=False, add_intermediate_dense_layer=True,
         add_dense_output=True, out_activation='sigmoid')
     
 def main():
-    tf.config.experimental_run_functions_eagerly(True)
     args = parse_args()
-    # wandb_project_name = 'chord-detection' + ('-lstm' if args.lstm else '')
+    if args.eager: tf.config.run_functions_eagerly(True)
+
     wandb_project_name = 'nsynth_chords'
     wandb.init(entity='jxmorris12', project=os.environ.get('WANDB_PROJECT', wandb_project_name), job_type='train', config=args)
     args.run_name = wandb.run.id
@@ -101,7 +100,6 @@ def main():
     #
     # create data augmenter and generators
     #
-    include_num_notes_played = False
     train_generator = AudioDataGenerator(
         train_tracks, args.frame_length,
         args.max_polyphony,
@@ -113,7 +111,6 @@ def main():
         min_midi=args.min_midi, max_midi=args.max_midi,
         sample_rate=args.sample_rate,
         batch_by_track=False,
-        include_num_notes_played=False,
     )
     val_generator = AudioDataGenerator(
         val_tracks, args.frame_length,
@@ -125,10 +122,9 @@ def main():
         min_midi=args.min_midi, max_midi=args.max_midi,
         sample_rate=args.sample_rate,
         batch_by_track=False,
-        include_num_notes_played=False,
     )
 
-    breakpoint()
+    # breakpoint()
     
     print('Wrapping datasets using tf.data.Dataset.from_generator...')
     steps_per_epoch = len(train_generator)
@@ -144,22 +140,20 @@ def main():
     #
     from tensorflow import keras # https://www.tensorflow.org/api_docs/python/tf/keras/optimizers/Adam
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.learning_rate, clipnorm=1)
-    print(f'model.compile() with optimizer {args.optimizer}')
+    print(f'model.compile() with optimizer Adam')
     
-    metrics = ['categorical_accuracy', pitch_number_acc, NStringChordAccuracy('multi')]
+    # metrics = ['categorical_accuracy', pitch_number_acc, NStringChordAccuracy('multi')]
+    metrics = ['categorical_accuracy', pitch_number_acc]
     
-    for n_strings in range(1, 7):
-        if n_strings > args.max_polyphony:
-            # Don't show metrics for chords we're not training on
-            break
-        metrics.append(NStringChordAccuracy(n_strings))
+    # for n_strings in range(1, 7):
+    #     if n_strings > args.max_polyphony:
+    #         # Don't show metrics for chords we're not training on
+    #         break
+    #     metrics.append(NStringChordAccuracy(n_strings))
 
     metrics += [tf.keras.metrics.Precision(), tf.keras.metrics.Recall(), f1_score]
     
-    if args.loss == 'classification':
-        loss_fn = tf.keras.losses.CategoricalCrossentropy
-    else:
-        raise ValueError(f'Unrecognized loss function {loss_fn}')
+    loss_fn = tf.keras.losses.CategoricalCrossentropy()
     
     model.compile(optimizer=optimizer, loss=loss_fn, metrics=metrics,
         run_eagerly=args.eager)
@@ -167,7 +161,7 @@ def main():
     # callbacks
     #
     time_str = time.strftime("%Y%m%d-%H%M%S")
-    model_folder = os.path.join('outputs', f'{args.model}-{time_str}')
+    model_folder = os.path.join('outputs', f'crepe-{time_str}')
     pathlib.Path(model_folder).mkdir(parents=True, exist_ok=True)
     print(f'Saving args & model to {model_folder}')
     with open(os.path.join(model_folder, 'args.json'), 'w') as args_file:

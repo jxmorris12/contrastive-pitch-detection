@@ -3,9 +3,11 @@ import tensorflow as tf
 
 from keras import backend as K
 
+precision = tf.keras.metrics.Precision()
+recall = tf.keras.metrics.Recall()
 def f1_score(y_true, y_pred):
-    p = tf.keras.metrics.Precision()(y_true, y_pred)
-    r = tf.keras.metrics.Recall()(y_true, y_pred)
+    p = precision(y_true, y_pred)
+    r = recall(y_true, y_pred)
     return 2 * ((p * r) / (p + r))
 
 def _reshape_lstm_outputs(y_true, y_pred):
@@ -19,7 +21,7 @@ def _reshape_lstm_outputs(y_true, y_pred):
 def MeanSquaredError(y_true, y_pred):
     return tf.reduce_mean((y_pred - y_true)**2)
     
-def loss_1(y_true, y_pred, alpha=1.0):
+def loss_1(y_true, y_pred):
     """ This loss function uses binary cross-entropy to solve pitch detection
     as a multiclass classification problem. It basically expects a classifier
     for each possible MIDI value and treats each one as an independent binary
@@ -28,29 +30,7 @@ def loss_1(y_true, y_pred, alpha=1.0):
     # breakpoint()
     _reshape_lstm_outputs(y_true, y_pred)
     
-    loss = (alpha * K.binary_crossentropy(y_true, y_pred)) + \
-        ((1 - alpha) * pitch_number_acc(y_true, y_pred, mse=True))
-    
-    return loss
-
-
-def loss_2(y_true, y_pred, alpha=0.99):
-    """ This loss function rewards the model for correct predictions and tries
-    to minimize the l2 norm of incorrect predictions.
-    
-    (this didn't work well when I tried it, not sure why.)
-    """
-    _reshape_lstm_outputs(y_true, y_pred)
-    
-    zero = K.constant(0, dtype=tf.float32)
-    # Component 1: true positive accuracy
-    pos_mask = K.not_equal(y_true, zero)
-    rew1 = _acc(y_true[pos_mask], y_pred[pos_mask])
-    # Component 2: magnitude of false negatives
-    neg_mask = K.equal(y_true, zero)
-    rew2 = K.sqrt(K.sum(K.square(y_pred[neg_mask])))
-    # combine and return
-    return (alpha * rew2) + ((1 - alpha) * rew2)
+    return K.binary_crossentropy(y_true, y_pred)
 
 
 def string_level_regression_loss(y_true, y_pred):

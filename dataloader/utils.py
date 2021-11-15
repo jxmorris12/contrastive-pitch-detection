@@ -1,6 +1,13 @@
 import functools
+import math
 import methodtools
+import random
+
+import interlap
 import numpy as np
+import torchaudio
+import scipy.signal as sps
+import tqdm
 
 class AnnotatedAudioChunk:
     """ An audio snippet. Consists of an audio sample, frequency annnotations,
@@ -133,6 +140,8 @@ class Track:
     
     def resample(self, new_sample_rate):
         """ Resamples ``self.waveform`` to specified sampling rate. """
+        if new_sample_rate == self.sample_rate:
+            return
         data = self.waveform
         number_of_samples = round(len(data) * float(new_sample_rate) / self.sample_rate)
         self.waveform = sps.resample(data, number_of_samples)
