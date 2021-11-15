@@ -41,8 +41,6 @@ def parse_args():
         help="Whether to add some randomness to frame offsets for training data")
     parser.add_argument('--eager', '--run_eagerly', default=False, 
         action='store_true', help='run TensorFlow in eager execution mode')
-    parser.add_argument('--lstm', default=0, type=int, choices=(0,1),
-        help='add an LSTM layer' )
     parser.add_argument('--max_polyphony', type=int, default=float('inf'), choices=list(range(6)),
         help='If specified, will filter out frames with greater than this number of notes')
 
