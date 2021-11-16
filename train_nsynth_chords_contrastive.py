@@ -32,9 +32,10 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=2)
     parser.add_argument('--random_seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for adam optimizer')
+    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate for adam optimizer')
     parser.add_argument('--sample_rate', type=int, default=16_000, help='audio will be resampled to this sample rate before being passed to the model (measured in Hz)')
     parser.add_argument('--frame_length', '--frame_length', type=int, default=1024, help='length of audio samples (in number of datapoints)')
+    parser.add_argument('--embedding_dim', type=int, default=256, help='representation size of note embeddings')
 
     parser.add_argument('--val_split', type=float, default=0.05, help='Size of the validation set relative to total number of waveforms. Will be an approximate, since individual tracks are grouped within train or validation only.')
     parser.add_argument('--randomize_train_frame_offsets', '--rtfo', type=bool, default=True, 
@@ -63,11 +64,10 @@ def parse_args():
     return args
 
 def get_model(args):
-    output_dim = 128 # TODO(jxm): choose embedding dim
-    crepe = CREPE('medium', input_dim=args.frame_length, num_output_nodes=128, load_pretrained=False,
+    crepe = CREPE('medium', input_dim=args.frame_length, num_output_nodes=args.embedding_dim, load_pretrained=False,
         freeze_some_layers=False, add_intermediate_dense_layer=True,
         add_dense_output=True, out_activation=None)
-    return ContrastiveModel(crepe, args.min_midi, args.max_midi, output_dim)
+    return ContrastiveModel(crepe, args.min_midi, args.max_midi, args.embedding_dim)
 
 def main():
     args = parse_args()
