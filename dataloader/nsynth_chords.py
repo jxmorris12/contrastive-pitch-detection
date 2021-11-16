@@ -7,10 +7,10 @@ TRAIN_PATH = '/home/jxm3/research/transcription/nsynth-chords/nsynth-keyboard-ch
 TEST_PATH = '/home/jxm3/research/transcription/nsynth-chords/nsynth-keyboard-chords-test.p'
 VALID_PATH = '/home/jxm3/research/transcription/nsynth-chords/nsynth-keyboard-chords-valid.p'
 
-VALID_PATH = TEST_PATH # tmp (deleteme!)
-TRAIN_PATH = TEST_PATH # tmp (deleteme!)
+# VALID_PATH = TEST_PATH # tmp (deleteme!)
+# TRAIN_PATH = TEST_PATH # tmp (deleteme!)
 
-def load_nsynth_chords(split='train', tiny=True):
+def load_nsynth_chords(split='train', tiny=False):
     if split == 'train':
         raw_data = pickle.load(open(TRAIN_PATH, 'rb'))
     elif split == 'valid':
