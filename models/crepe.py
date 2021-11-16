@@ -87,11 +87,7 @@ def CREPE(model_capacity, input_dim=1024, num_output_nodes=1, load_pretrained=Fa
         y = Dense(360, activation='relu', name="classifier")(y) # 'cents' from CREPE
     
     if add_dense_output:
-        if num_output_nodes in [1, 6]:
-            print(f"INFO: Not adding activation function to output layer with {num_output_nodes} nodes - assuming REGRESSION")
-            y = Dense(num_output_nodes, activation=None, name="out")(y)
-        else: 
-            y = Dense(num_output_nodes, activation=out_activation, name="out")(y)
+        y = Dense(num_output_nodes, activation=out_activation, name="out")(y)
     
     model = Model(inputs=x, outputs=y)
 
