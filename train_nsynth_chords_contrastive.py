@@ -11,7 +11,7 @@ import numpy as np
 import tensorflow as tf
 from wandb.keras import WandbCallback # https://docs.wandb.com/library/integrations/keras
 
-# from callbacks import LogRecordingSpectrogramCallback, VisualizePredictionsCallback
+from callbacks import LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
 from models import CREPE, ContrastiveModel
@@ -169,20 +169,17 @@ def main():
     print(f'Saving args & model to {model_folder}')
     with open(os.path.join(model_folder, 'args.json'), 'w') as args_file:
         json.dump(args.__dict__, args_file)
-    # model_path_format = os.path.join(model_folder, 'weights.{epoch:02d}-.hdf5')
-    # best_model_path_format = os.path.join(model_folder, 'weights.best.{epoch:02d}.tf')
-
+    
+    best_model_path_format = os.path.join(model_folder, 'weights.best.{epoch:02d}.h5')
     early_stopping = keras.callbacks.EarlyStopping(monitor='val_loss', patience=75, verbose=1)
-    # TODO get model-saving working again...
-    # save_best_model = keras.callbacks.ModelCheckpoint(best_model_path_format, save_best_only=True, monitor='val_loss')
+    save_best_model = keras.callbacks.ModelCheckpoint(best_model_path_format, save_best_only=True, save_weights_only=True, monitor='val_loss')
     reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.316227766, patience=2, min_lr=1e-10, verbose=1)
     
-    # callbacks = [early_stopping, save_best_model, reduce_lr, WandbCallback()]
-    callbacks = [early_stopping, reduce_lr, WandbCallback()]
+    callbacks = [early_stopping, save_best_model, reduce_lr, WandbCallback()]
     
     # This callback only works for models that take a single waveform input (for now)
     # callbacks.append(LogRecordingSpectrogramCallback(args))
-    #callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps)) ## TODO(jxm): figure out why this doesn't work!
+    callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps))
     
     dataset_output_types = (float, float)
     train_generator = tf.data.Dataset.from_generator(

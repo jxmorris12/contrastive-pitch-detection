@@ -168,7 +168,7 @@ def main():
     best_model_path_format = os.path.join(model_folder, 'weights.best.{epoch:02d}.hdf5')
 
     early_stopping = keras.callbacks.EarlyStopping(monitor='val_loss', patience=75, verbose=1)
-    save_best_model = keras.callbacks.ModelCheckpoint(best_model_path_format, save_best_only=True, monitor='val_loss')
+    save_best_model = keras.callbacks.ModelCheckpoint(best_model_path_format, save_best_only=True, save_weights_only=True, monitor='val_loss')
     reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.316227766, patience=2, min_lr=1e-10, verbose=1)
     
     callbacks = [early_stopping, save_best_model, reduce_lr, WandbCallback()]
