@@ -6,6 +6,8 @@ import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import sklearn
+import sklearn.manifold
 import tensorflow as tf
 import wandb
 import tqdm
@@ -63,7 +65,7 @@ class VisualizePredictionsCallback(tf.keras.callbacks.Callback):
     ``num_val_batches`` of data. Runs every ``every_n_epochs`` epochs. Logs
     some instance-level and aggregated predictions to Weights & Biases.
     """
-    def __init__(self, args, val_generator, num_validation_steps, every_n_epochs=5, num_validation_points=5*32):
+    def __init__(self, args, val_generator, num_validation_steps, every_n_epochs=3, num_validation_points=3*128):
         self.args = args
         self.val_generator = val_generator
         self.num_validation_steps = num_validation_steps
@@ -109,7 +111,7 @@ class VisualizePredictionsCallback(tf.keras.callbacks.Callback):
             wandb.plot.bar(table, "prediction_type", "count", title="Validation prediction types")
         })
 
-    def _log_instance_level_metrics(self, epoch, x, y_true, y_pred, frame_info, max_instance_level_plots=32):
+    def _log_instance_level_metrics(self, epoch, x, y_true, y_pred, frame_info, max_instance_level_plots=128):
         table_columns = [
             'dataset', 'track', 'start_time', 'end_time', 
             'waveform', 'preds', 'pred_labels', 'true_labels', 
@@ -190,3 +192,60 @@ class VisualizePredictionsCallback(tf.keras.callbacks.Callback):
         else:
             print(f'Logging VisualizePredictionsCallback instance-level predictions at epoch {epoch}')
             self._log_instance_level_metrics(epoch, x, y_true, y_pred, frame_info)
+
+class LogNoteEmbeddingStatisticsCallback(keras.callbacks.Callback):
+    """ Plots some statistics related to a note embedding matrix.
+    """
+    def __init__(self, model):
+        assert hasattr(model, 'embedding_table')
+        self.model = model
+
+    @property
+    def embedding_table(self):
+        return self.model.embedding_table
+
+    def _log_embedding_stats(self):
+        """Log embedding norm, mean, and std."""
+        emb_norm = tf.math.reduce_mean(tf.norm(self.embedding_table, axis=1))
+        emb_std = tf.math.reduce_mean(tf.math.reduce_std(self.embedding_table, axis=0))
+        wandb.log(
+            {
+                "note_embedding__norm": emb_norm,
+                "note_embedding__std": emb_std,
+            }
+        )
+
+    def _plot_embedding_tsne(self):
+        """Plot a 2D TSNE of all the embeddings, colored by note."""
+        num_notes, emb_dim = self.embedding_table.shape
+        # create the TSNE
+       tsne = sklearn.manifold.TSNE(n_components=2, random_state=0, perplexity=5, learning_rate='auto', init='random')
+        emb_dim_2 = tsne.fit_transform(self.embedding_table)
+        # 12 colors, one per note
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', 
+                  '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#0e3f43', '#e0e0e0']
+        emb_colors = []
+        for i in range(num_notes):
+            emb_colors.append(colors[i % len(colors)])
+        # scatterplot of TSNE results
+        plt.scatter(emb_dim_2[:,0], emb_dim_2[:,1], c=emb_colors)
+        wandb.log({"note_embedding__tsne": wandb.Image(plt)})
+        plt.cla()
+        plt.close()
+        
+    def _plot_embedding_similarities(self):
+        """Plots all-to-all similarities between the embeddings."""
+        with sns.axes_style("white"):
+            fig, ax = plt.subplots(figsize=(10, 8))
+            ax = sns.heatmap(self.embedding_table @ tf.transpose(self.embedding_table), square=True)
+        wandb.log({"note_embedding__similarities": wandb.Image(plt)})
+        plt.cla()
+        plt.close()
+    
+    def on_epoch_begin(self, epoch, logs=None):
+        """ At the beginning of each epoch, log embedding stats.
+        """
+        self._log_embedding_stats()
+        self._plot_embedding_tsne()
+        self._plot_embedding_similarities()
+        

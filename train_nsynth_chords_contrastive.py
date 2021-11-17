@@ -11,7 +11,7 @@ import numpy as np
 import tensorflow as tf
 from wandb.keras import WandbCallback # https://docs.wandb.com/library/integrations/keras
 
-from callbacks import LogRecordingSpectrogramCallback, VisualizePredictionsCallback
+from callbacks import LogNoteEmbeddingStatisticsCallback, LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
 from models import CREPE, ContrastiveModel
@@ -175,7 +175,7 @@ def main():
     save_best_model = keras.callbacks.ModelCheckpoint(best_model_path_format, save_best_only=True, save_weights_only=True, monitor='val_loss')
     reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.316227766, patience=2, min_lr=1e-10, verbose=1)
     
-    callbacks = [early_stopping, save_best_model, reduce_lr, WandbCallback()]
+    callbacks = [early_stopping, save_best_model, reduce_lr, WandbCallback(), LogNoteEmbeddingStatisticsCallback(model)]
     
     # This callback only works for models that take a single waveform input (for now)
     # callbacks.append(LogRecordingSpectrogramCallback(args))

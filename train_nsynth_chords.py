@@ -11,7 +11,7 @@ import numpy as np
 import tensorflow as tf
 from wandb.keras import WandbCallback # https://docs.wandb.com/library/integrations/keras
 
-# from callbacks import LogRecordingSpectrogramCallback, VisualizePredictionsCallback
+from callbacks import LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
 from models import CREPE
@@ -175,7 +175,7 @@ def main():
     
     # This callback only works for models that take a single waveform input (for now)
     # callbacks.append(LogRecordingSpectrogramCallback(args))
-    #callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps)) ## TODO(jxm): figure out why this doesn't work!
+    callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps))
     
     dataset_output_types = (float, float)
     train_generator = tf.data.Dataset.from_generator(
