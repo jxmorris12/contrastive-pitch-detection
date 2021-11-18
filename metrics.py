@@ -1,42 +1,48 @@
-import keras
-import tensorflow as tf
-
-# precision = tf.keras.metrics.Precision()
-# recall = tf.keras.metrics.Recall()
-# def f1_score(y_true, y_pred):
-#     p = precision(y_true, y_pred)
-#     r = recall(y_true, y_pred)
-#     return 2 * ((p * r) / (p + r))
+import abc
+import torch
     
-    
-def _euclidean_distance(y_true, y_pred):
-    """
-    Euclidean distance loss
-    https://en.wikipedia.org/wiki/Euclidean_distance
-    :param y_true: TensorFlow/Theano tensor
-    :param y_pred: TensorFlow/Theano tensor of the same shape as y_true
-    :return: float
-    """
-    return torch.sqrt(torch.sum((y_pred - y_true)**2, axis=-1))
+class Metric(abc.ABC):
+    # TODO(jxm): Use this class to implement per-step averaging.
+    @abc.abstractmethod
+    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+        pass
 
-def _acc(y_true, y_pred):
-    """ computes the accuracy of predictions ``y_pred`` given labels ``y_true``
-    
-    this is how the keras backend does it. see:
-    datascience.stackexchange.com/questions/14415
+def categorical_acc(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    """The number of multi-class predictions for y_true that are 100% correct (i.e. all classes
+        in a given sample must be correctly predicted).
     """
-    label_slots = (y_true == 1)
-    return torch.mean(torch.equal(y_true[label_slots], torch.round(y_pred)[label_slots]))
-
-def pitch_number_acc(y_true, y_pred):
-    """ whether the number of activated pitches is the correct number """
     y_pred = torch.round(y_pred)
-    num_true_pitches = torch.sum(y_true, axis=1)
-    num_pred_pitches = torch.sum(y_pred, axis=1)
-    return torch.mean(torch.equal(num_true_pitches, num_pred_pitches))
-    
+    all_correct = torch.all(y_true == y_pred, axis=1)
+    return all_correct.sum() / len(all_correct)
 
-class NStringChordAccuracy(keras.metrics.Metric):
+def precision(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    """Precision: (True Positives) / (True Positives + False Positives)"""
+    y_pred = torch.round(y_pred)
+    true_positives = torch.logical_and((y_true == 1), (y_pred == 1))
+    false_positives = torch.logical_and((y_true == 0), (y_pred == 1))
+    return true_positives / (true_positives + false_positives)
+
+def recall(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    """Recall: (True Positives) / (True Positives + False Negatives)"""
+    y_pred = torch.round(y_pred)
+    true_positives = torch.logical_and((y_true == 1), (y_pred == 1))
+    false_negatives = torch.logical_and((y_true == 1), (y_pred == 0))
+    return true_positives / (true_positives + false_negatives)
+
+def f1(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    """F1: 2 * (Precision * Recall) / (Precision + Recall)"""
+    p = precision(y_true, y_pred)
+    r = recall(y_true, y_pred)
+    return 2 * (p * r) / (p + r)
+
+def pitch_number_acc(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    """The accuracy at which y_pred has the same number of 1s as y_true."""
+    y_pred = torch.round(y_pred)
+    num_true_ones = y_true.sum(1)
+    num_pred_ones = y_pred.sum(1)
+    return (num_true_ones == num_pred_ones).sum() / len(num_true_ones)
+
+class NStringChordAccuracy(Metric):
     """ Computes accuracy across an epoch on chords with n strings. Ignores 
     NaNs.
     
@@ -47,10 +53,8 @@ class NStringChordAccuracy(keras.metrics.Metric):
         assert (type(n) == int) or (n == 'multi')
         super().__init__(name=f'chord_{n}_string_accuracy', **kwargs)
         self.n = n
-        self.total_acc = 0.0
-        self.total_samples = 0.0
     
-    def update_state(self, y_true, y_pred):
+    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
         strings_per_y = torch.sum(y_true, axis=1)
         
         if self.n == 'multi':
@@ -61,12 +65,4 @@ class NStringChordAccuracy(keras.metrics.Metric):
         y_true = y_true[pitches]
         y_pred = y_pred[pitches]
         
-        self.total_acc += _acc(y_true, y_pred)
-        self.total_samples += 1
-    
-    def result(self):
-        return torch.divide(self.total_acc, self.total_samples)
-
-    def reset(self):
-        self.total_acc = 0.0
-        self.total_samples = 0.0
+        return categorical_accuracy(y_true, y_pred)

@@ -3,9 +3,6 @@ import functools
 import torch
 import torch.nn.functional as F
 
-import torchcrepe
-
-
 ###########################################################################
 # Model definition
 ###########################################################################
@@ -17,7 +14,7 @@ CREPE_MODEL_CAPACITIES = {
 class CREPE(torch.nn.Module):
     """CREPE model definition"""
 
-    def __init__(self, model='full'):
+    def __init__(self, model='full', num_output_nodes=88, out_activation='sigmoid'):
         super().__init__()
 
         # Model-specific layer parameters
@@ -99,7 +96,10 @@ class CREPE(torch.nn.Module):
 
         self.classifier = torch.nn.Linear(
             in_features=self.in_features,
-            out_features=torchcrepe.PITCH_BINS)
+            out_features=num_output_nodes)
+        
+        assert out_activation in ['sigmoid', None]
+        self.out_activation = out_activation
 
     def forward(self, x, embed=False):
         # Forward pass through first five layers
@@ -115,7 +115,11 @@ class CREPE(torch.nn.Module):
         x = x.permute(0, 2, 1, 3).reshape(-1, self.in_features)
 
         # Compute logits
-        return torch.sigmoid(self.classifier(x))
+        x = self.classifier(x)
+        if self.out_activation == 'sigmoid':
+            return torch.sigmoid(x)
+        else:
+            return x
 
     ###########################################################################
     # Forward pass utilities

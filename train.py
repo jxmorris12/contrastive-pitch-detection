@@ -9,18 +9,17 @@ import torch
 import wandb
 
 import numpy as np
-import tensorflow as tf
 
 from callbacks import LogNoteEmbeddingStatisticsCallback, LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
 from models import ContrastiveModel, CREPE
 from metrics import (
-    MeanSquaredError, 
-    NStringChordAccuracy, f1_score, pitch_number_acc
+    NStringChordAccuracy, pitch_number_acc,
+    precision, recall, f1
 )
 
-device = torch.device("cuda" if use_cuda else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ask the OS how many cpus we have (stackoverflow.com/questions/1006289)
 num_cpus = len(os.sched_getaffinity(0))
 def set_random_seed(r):
@@ -43,8 +42,6 @@ def parse_args():
         help="Whether to add some randomness to frame offsets for training data")
     parser.add_argument('--contrastive', default=False, 
         action='store_true', help='train with contrastive loss')
-    parser.add_argument('--eager', '--run_eagerly', default=False, 
-        action='store_true', help='run TensorFlow in eager execution mode')
     parser.add_argument('--max_polyphony', type=int, default=float('inf'), choices=list(range(6)),
         help='If specified, will filter out frames with greater than this number of notes')
 
@@ -63,17 +60,15 @@ def parse_args():
     return args
 
 def get_model(args):
-    crepe = CREPE('medium', input_dim=args.frame_length, num_output_nodes=88, load_pretrained=False,
-        freeze_some_layers=False, add_intermediate_dense_layer=True,
-        add_dense_output=True, out_activation='sigmoid')
     if args.contrastive:
+        crepe = CREPE(model='tiny', num_output_nodes=88, out_activation='sigmoid')
         return ContrastiveModel(crepe, args.min_midi, args.max_midi, args.embedding_dim)
     else:
+        out_activation = None
         return crepe
     
 def main():
     args = parse_args()
-    if args.eager: tf.config.run_functions_eagerly(True)
 
     wandb_project_name = 'nsynth_chords'
     wandb.init(entity='jxmorris12', project=os.environ.get('WANDB_PROJECT', wandb_project_name), job_type='train', config=args)
@@ -125,10 +120,6 @@ def main():
         sample_rate=args.sample_rate,
         batch_by_track=False,
     )
-
-    # breakpoint()
-    
-    print('Wrapping datasets using tf.data.Dataset.from_generator...')
     steps_per_epoch = len(train_generator)
     validation_steps = len(val_generator)
     
@@ -137,9 +128,7 @@ def main():
     
     model = get_model(args)
     model.summary()
-    #
-    # model compile() and fit()
-    #
+
     print('training with optimizer Adam')
     optimizer = torch.optim.Adam(model, lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
@@ -147,7 +136,7 @@ def main():
     metrics = {
         'precision': precision,
         'recall': recall,
-        'f1': f1_score,
+        'f1': f1,
         'pitch_number_acc': pitch_number_acc,
         'n_string_acc_multi': NStringChordAccuracy('multi')
     }
@@ -232,20 +221,6 @@ def main():
                     wandb.log({ metric_name: metric_val}, step=step)
             # Also shuffle training data after each epoch.
             train_data_loader.on_epoch_end()
-
-        
-        
-    # print('model.fit()')
-    # model.fit(
-    #     x=train_generator,
-    #     steps_per_epoch=steps_per_epoch,
-    #     validation_steps=validation_steps,
-    #     validation_data=val_generator,
-    #     use_multiprocessing=(num_cpus > 1),
-    #     workers=num_cpus,
-    #     epochs=args.epochs, 
-    #     callbacks=callbacks,
-    # )
     
     print(f'training done! model saved to {model_folder}')
 

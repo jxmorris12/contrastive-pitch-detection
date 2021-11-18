@@ -10,7 +10,7 @@ pebble
 pyrubberband
 seaborn
 sklearn
-tensorflow
+torch
 torchaudio
 tqdm
 transitions

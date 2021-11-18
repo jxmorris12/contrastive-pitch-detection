@@ -13,8 +13,7 @@ import sklearn.manifold
 import wandb
 import tqdm
 
-from utils import pyplot_to_numpy, get_prediction_type
-from utils.plot_mp3_predictions import load_wav, predict_audio_file
+from utils import get_prediction_type
 
 import matplotlib # stackoverflow.com/questions/45993879
 matplotlib.use('Agg') 
@@ -29,6 +28,7 @@ class LogRecordingSpectrogramCallback(Callback):
     """
     def __init__(self, args, audio_file_path='samples/audio/day_tripper_intro.mp3',
         bins_per_window=4):
+        from utils.plot_mp3_predictions import load_wav
         self.frame_length = args.frame_length
         self.min_midi = args.min_midi
         self.max_midi = args.max_midi
@@ -40,6 +40,7 @@ class LogRecordingSpectrogramCallback(Callback):
         self.bins_per_window = bins_per_window
     
     def get_spectrogram(self):
+        from utils.plot_mp3_predictions import predict_audio_file
         return predict_audio_file(
             self.model, 
             self.wav, 
@@ -96,16 +97,14 @@ class VisualizePredictionsCallback(Callback):
         plt.cla()
         plt.close()
     
-    def _plot_waveform(self, waveform):
-        plt.figure(figsize=(4,2))
-        sns.lineplot(data=waveform)
-        return wandb.Image(pyplot_to_numpy(plt))
-    
     def _plot_preds(self, preds):
         plt.figure(figsize=(8,2))
         x = np.arange(self.args.min_midi, self.args.max_midi + 1)
         sns.barplot(x=x, y=preds)
-        return wandb.Image(pyplot_to_numpy(plt))
+        wandb_fig = wandb.Plotly(plt) # TODO: if this doesn't work try Plotly(fig) ?
+        plt.cla()
+        plt.close()
+        return wandb_fig
     
     def _plot_pred_types(self, step: int, pred_types: Dict[str, int]):
         """ Plots a bar graph of prediction types """
@@ -145,7 +144,8 @@ class VisualizePredictionsCallback(Callback):
                 frame_info.dataset_name, frame_info.track_name, 
                 frame_info.start_time, frame_info.end_time
             ]
-            row.append(self._plot_waveform(waveform))
+            # row.append(self._plot_waveform(waveform))
+            row.append(wandb.Audio(waveform, sample_rate=self.args.sample_rate))
             row.append(self._plot_preds(preds))
             pred_midis = self.args.min_midi + preds.round().nonzero()[0]
             row.append(str(pred_midis))

@@ -4,7 +4,6 @@ import functools
 import math
 import numpy as np
 import random
-import tensorflow as tf
 
 def midi_vals_to_categorical(midi_values, min_midi, max_midi):
     """ Converts a list of float midi values to a single categorical vector. """
@@ -173,17 +172,6 @@ class TrackFrameSampler:
             self._init_track_frame_index_pairs()
         else:
             random.shuffle(self.track_frame_index_pairs)
-
-def pyplot_to_numpy(plt):
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    image = tf.image.decode_png(buf.getvalue(), channels=4)
-    image = tf.expand_dims(image, 0)
-    plt.cla()
-    plt.close()
-    return image
 
 def get_prediction_type(pred_midis, true_midis):
     """ Returns a string explaining what the model did wrong here. 

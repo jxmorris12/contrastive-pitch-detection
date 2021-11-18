@@ -2,14 +2,13 @@
 # jm8wx 10/25/20
 #
 
+# TODO(jxm): update to work with torch models [11/18/2021]
+
 # model imports
-from metrics import (
-    loss_1
-)
 import models
 
 # program imports
-from keras.models import load_model
+# from keras.models import load_model
 import matplotlib.pyplot as plt
 from natsort import natsorted # ['11', 1', '10'] -> ['1', '10', '11']
 from scipy import signal
@@ -19,7 +18,7 @@ import json
 import numpy as np
 import os
 import seaborn as sns
-import tensorflow as tf
+# import tensorflow as tf
 import torchaudio
 import tqdm
 import utils
@@ -118,9 +117,9 @@ def main():
     sample_rate = args['sample_rate']
     # TODO update custom objects / load models better
     try:
-        model = load_model(model_path, custom_objects={'custom_categorical_loss': loss_1 })
+        model = load_model(model_path)
     except ValueError:
-        model = models.CREPE_2_Heads(
+        model = models.CREPE(
             'tiny',
             hidden_representation_size=64,
             frame_length=args['frame_length'],
