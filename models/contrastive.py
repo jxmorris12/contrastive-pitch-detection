@@ -58,7 +58,7 @@ class ContrastiveModel(tf.keras.Model):
                 batch
         """
         logits = A_f @ tf.transpose(self.embedding_table) # [b, d] @ [d, n] -> [b, n]
-        return tf.nn.softmax(logits, axis=1)
+        return tf.math.sigmoid(logits)
 
     def call(self, inputs) -> Dict[str, tf.Tensor]:
         A_f = self.model(inputs) # [n, d]
