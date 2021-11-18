@@ -1,13 +1,17 @@
-import numpy as np
-from tensorflow import keras
 import random
+
+import numpy as np
+import torch
 
 from utils import TrackFrameSampler
 
 np.seterr(divide='ignore', invalid='ignore')
 
-class AudioDataGenerator(keras.utils.Sequence):
-    """ Generates data for Keras. Enables on-the-fly augmentation and such.
+class AudioDataGenerator(torch.utils.data.Dataset):
+    """ Generates data. Enables on-the-fly augmentation and such.
+
+    This is a torch map-style dataset. See this link for more info:
+        pytorch.org/docs/stable/data.html#map-style-datasets
     
     If ``batch_by_track`` is true, batches audio by track. This is useful
         when training needs to happen with samples in sequential order. For
@@ -76,16 +80,6 @@ class AudioDataGenerator(keras.utils.Sequence):
     def on_epoch_end(self):
         """ Re-shuffle examples after each epoch. """
         self.track_sampler.on_epoch_end()
-    
-    def _callable(self, num_epochs):
-        """ TensorFlow tf.data.Dataset.from_generator is overly picky about
-        parameters. See https://stackoverflow.com/questions/49280016/how-to-make-a-generator-callable
-        """
-        def gen():
-            for _ in range(num_epochs):
-                for tuple_of_things in self:
-                    yield tuple_of_things
-        return gen
 
 
 if __name__ == '__main__':

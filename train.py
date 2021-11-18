@@ -11,7 +11,7 @@ import wandb
 import numpy as np
 import tensorflow as tf
 
-from callbacks import LogRecordingSpectrogramCallback, VisualizePredictionsCallback
+from callbacks import LogNoteEmbeddingStatisticsCallback, LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
 from models import ContrastiveModel, CREPE
@@ -26,7 +26,8 @@ num_cpus = len(os.sched_getaffinity(0))
 def set_random_seed(r):
     random.seed(r)
     np.random.seed(r)
-    tf.random.set_seed(r)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed(random_seed)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model.')
@@ -58,10 +59,6 @@ def parse_args():
     
     assert args.min_midi < args.max_midi, "Must provide a positive range of MIDI values where max_midi > min_midi"
     set_random_seed(args.random_seed)
-    
-    
-    tf.get_logger().setLevel('ERROR')
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Shut up tensorflow!
     
     return args
 
@@ -145,15 +142,21 @@ def main():
     #
     print('training with optimizer Adam')
     optimizer = torch.optim.Adam(model, lr=args.learning_rate)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
     
-    # metrics = ['categorical_accuracy', pitch_number_acc, NStringChordAccuracy('multi')]
+    metrics = {
+        'precision': precision,
+        'recall': recall,
+        'f1': f1_score,
+        'pitch_number_acc': pitch_number_acc,
+        'n_string_acc_multi': NStringChordAccuracy('multi')
+    }
     # metrics = ['categorical_accuracy', pitch_number_acc]
-    # for n_strings in range(1, 7):
-    #     if n_strings > args.max_polyphony:
-    #         # Don't show metrics for chords we're not training on
-    #         break
-    #     metrics.append(NStringChordAccuracy(n_strings))
-    # metrics += [tf.keras.metrics.Precision(), tf.keras.metrics.Recall(), f1_score]
+    for n_strings in range(1, 7):
+        if n_strings > args.max_polyphony:
+            # Don't show metrics for chords we're not training on
+            break
+        metrics[f'n_string_acc_{n_strings}'] = NStringChordAccuracy(n_strings)
 
     wandb.watch(model)
 
@@ -166,26 +169,13 @@ def main():
     print(f'Saving args & model to {model_folder}')
     with open(os.path.join(model_folder, 'args.json'), 'w') as args_file:
         json.dump(args.__dict__, args_file)
-
-    # early_stopping = keras.callbacks.EarlyStopping(monitor='val_loss', patience=75, verbose=1)
-    # save_best_model = keras.callbacks.ModelCheckpoint(best_model_path_format, save_best_only=True, save_weights_only=True, monitor='val_loss')
-    # reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.316227766, patience=2, min_lr=1e-10, verbose=1)
+    # TODO(jxm): implement saving best models with pytorch
     
-    # callbacks = [early_stopping, save_best_model, reduce_lr]
-    
-    # This callback only works for models that take a single waveform input (for now)
-    # callbacks.append(LogRecordingSpectrogramCallback(args))
-    # callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps))
-    
-    dataset_output_types = (float, float)
-    train_generator = tf.data.Dataset.from_generator(
-        train_generator._callable(args.epochs), output_types=dataset_output_types
-    ).prefetch(tf.data.experimental.AUTOTUNE)
-    val_generator = tf.data.Dataset.from_generator(
-        val_generator._callable(args.epochs), output_types=dataset_output_types
-    ).prefetch(tf.data.experimental.AUTOTUNE)
-    num_cpus = len(os.sched_getaffinity(0))
-
+    callbacks = []
+    callbacks.append(LogRecordingSpectrogramCallback(args))
+    callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps))
+    if args.contrastive:
+        callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     
     log_train_metrics_interval = int(steps_per_epoch / 10.0)
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.num_steps} epochs) = {steps_per_epoch * args.num_steps} ')
@@ -197,7 +187,7 @@ def main():
             for callback in callbacks:
                 callback.on_epoch_begin(epoch, step)
         # Get data and predictions.
-        (data, labels) = next()
+        (data, labels) = train_generator[step % len(train_generator)]
         data, labels = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
@@ -207,16 +197,41 @@ def main():
             output = model.get_probs(output) # Get actual probabilities for notes (for logging)
         else:
             loss = torch.nn.functional.binary_cross_entropy(output, labels)
+        wandb.log({ 'train_loss': loss }, step=step)
         loss.backward()
         optimizer.step()
+        scheduler.step()
         # Compute train metrics.
         # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
         if (step+1) % log_train_metrics_interval == 0:
+            logging.info('*** Computing training metrics for epoch %d (step %d) ***', epoch, step)
             for name, metric in metrics.items():
-                wandb.log({ f'train_{name}': metric(output, labels)}, step=step)
+                metric_name = f'train_{name}'
+                metric_val = metric(output, labels)
+                wandb.log({ metric_name: metric_val }, step=step)
         # Post-epoch callbacks.
         if (step+1) % steps_per_epoch == 0:
             # Compute validation metrics.
+            # TODO(jxm): avg validation metrics?
+            logging.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
+            for batch in val_generator:
+                (data, labels) = next()
+                data, labels = data.to(device), target.to(device)
+                with torch.no_grad():
+                    output = model(data)
+                    if args.contrastive:
+                        loss = model.contrastive_loss(output, labels)
+                        output = model.get_probs(output) # Get actual probabilities for notes (for logging)
+                    else:
+                        loss = torch.nn.functional.binary_cross_entropy(output, labels)
+                wandb.log({ 'val_loss': loss }, step=step)
+                for name, metric in metrics.items():
+                    metric_name = f'val_{name}'
+                    metric_val = metric(output, labels)
+                    logging.info('\t%s = %f', metric_name, metric_val)
+                    wandb.log({ metric_name: metric_val}, step=step)
+            # Also shuffle training data after each epoch.
+            train_data_loader.on_epoch_end()
 
         
         
