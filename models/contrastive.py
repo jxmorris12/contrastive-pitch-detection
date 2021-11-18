@@ -17,6 +17,11 @@ class ContrastiveModel(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
+    def get_probs(self, A_f: torch.Tensor) -> torch.Tensor:
+        # TODO: fix this
+        logits = A_f @ self.embedding.T # [b, d] @ [d, n] -> [b, n]
+        return torch.sigmoid(logits)
+
     def contrastive_loss(labels: torch.Tensor, A_f: torch.Tensor) -> torch.Tensor:
         # We sum feature representations of multiple notes to make a chord feature representation.
         # TODO optionally add MLP layer to joint embedding.

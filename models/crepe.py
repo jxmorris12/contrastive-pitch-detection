@@ -14,8 +14,8 @@ CREPE_MODEL_CAPACITIES = {
     'tiny': 4, 'small': 8, 'medium': 16, 'large': 24, 'full': 32
 }
 
-class Crepe(torch.nn.Module):
-    """Crepe model definition"""
+class CREPE(torch.nn.Module):
+    """CREPE model definition"""
 
     def __init__(self, model='full'):
         super().__init__()

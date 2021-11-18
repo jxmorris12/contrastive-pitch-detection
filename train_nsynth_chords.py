@@ -5,21 +5,22 @@ import pathlib
 import random
 import re
 import time
+import torch
 import wandb
 
 import numpy as np
 import tensorflow as tf
-from wandb.keras import WandbCallback # https://docs.wandb.com/library/integrations/keras
 
 from callbacks import LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
-from models import CREPE
+from models import ContrastiveModel, CREPE
 from metrics import (
     MeanSquaredError, 
     NStringChordAccuracy, f1_score, pitch_number_acc
 )
 
+device = torch.device("cuda" if use_cuda else "cpu")
 # ask the OS how many cpus we have (stackoverflow.com/questions/1006289)
 num_cpus = len(os.sched_getaffinity(0))
 def set_random_seed(r):
@@ -39,6 +40,8 @@ def parse_args():
     parser.add_argument('--val_split', type=float, default=0.05, help='Size of the validation set relative to total number of waveforms. Will be an approximate, since individual tracks are grouped within train or validation only.')
     parser.add_argument('--randomize_train_frame_offsets', '--rtfo', type=bool, default=True, 
         help="Whether to add some randomness to frame offsets for training data")
+    parser.add_argument('--contrastive', default=False, 
+        action='store_true', help='train with contrastive loss')
     parser.add_argument('--eager', '--run_eagerly', default=False, 
         action='store_true', help='run TensorFlow in eager execution mode')
     parser.add_argument('--max_polyphony', type=int, default=float('inf'), choices=list(range(6)),
@@ -63,9 +66,13 @@ def parse_args():
     return args
 
 def get_model(args):
-    return CREPE('medium', input_dim=args.frame_length, num_output_nodes=88, load_pretrained=False,
+    crepe = CREPE('medium', input_dim=args.frame_length, num_output_nodes=88, load_pretrained=False,
         freeze_some_layers=False, add_intermediate_dense_layer=True,
         add_dense_output=True, out_activation='sigmoid')
+    if args.contrastive:
+        return ContrastiveModel(crepe, args.min_midi, args.max_midi, args.embedding_dim)
+    else:
+        return crepe
     
 def main():
     args = parse_args()
@@ -136,25 +143,20 @@ def main():
     #
     # model compile() and fit()
     #
-    from tensorflow import keras # https://www.tensorflow.org/api_docs/python/tf/keras/optimizers/Adam
-    optimizer = tf.keras.optimizers.Adam(learning_rate=args.learning_rate, clipnorm=1)
-    print(f'model.compile() with optimizer Adam')
+    print('training with optimizer Adam')
+    optimizer = torch.optim.Adam(model, lr=args.learning_rate)
     
     # metrics = ['categorical_accuracy', pitch_number_acc, NStringChordAccuracy('multi')]
-    metrics = ['categorical_accuracy', pitch_number_acc]
-    
+    # metrics = ['categorical_accuracy', pitch_number_acc]
     # for n_strings in range(1, 7):
     #     if n_strings > args.max_polyphony:
     #         # Don't show metrics for chords we're not training on
     #         break
     #     metrics.append(NStringChordAccuracy(n_strings))
+    # metrics += [tf.keras.metrics.Precision(), tf.keras.metrics.Recall(), f1_score]
 
-    metrics += [tf.keras.metrics.Precision(), tf.keras.metrics.Recall(), f1_score]
-    
-    loss_fn = tf.keras.losses.CategoricalCrossentropy()
-    
-    model.compile(optimizer=optimizer, loss=loss_fn, metrics=metrics,
-        run_eagerly=args.eager)
+    wandb.watch(model)
+
     #
     # callbacks
     #
@@ -164,18 +166,16 @@ def main():
     print(f'Saving args & model to {model_folder}')
     with open(os.path.join(model_folder, 'args.json'), 'w') as args_file:
         json.dump(args.__dict__, args_file)
-    # model_path_format = os.path.join(model_folder, 'weights.{epoch:02d}-.hdf5')
-    best_model_path_format = os.path.join(model_folder, 'weights.best.{epoch:02d}.hdf5')
 
-    early_stopping = keras.callbacks.EarlyStopping(monitor='val_loss', patience=75, verbose=1)
-    save_best_model = keras.callbacks.ModelCheckpoint(best_model_path_format, save_best_only=True, save_weights_only=True, monitor='val_loss')
-    reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.316227766, patience=2, min_lr=1e-10, verbose=1)
+    # early_stopping = keras.callbacks.EarlyStopping(monitor='val_loss', patience=75, verbose=1)
+    # save_best_model = keras.callbacks.ModelCheckpoint(best_model_path_format, save_best_only=True, save_weights_only=True, monitor='val_loss')
+    # reduce_lr = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.316227766, patience=2, min_lr=1e-10, verbose=1)
     
-    callbacks = [early_stopping, save_best_model, reduce_lr, WandbCallback()]
+    # callbacks = [early_stopping, save_best_model, reduce_lr]
     
     # This callback only works for models that take a single waveform input (for now)
     # callbacks.append(LogRecordingSpectrogramCallback(args))
-    callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps))
+    # callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps))
     
     dataset_output_types = (float, float)
     train_generator = tf.data.Dataset.from_generator(
@@ -187,15 +187,37 @@ def main():
     num_cpus = len(os.sched_getaffinity(0))
 
     
+    log_train_metrics_interval = int(steps_per_epoch / 10.0)
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.num_steps} epochs) = {steps_per_epoch * args.num_steps} ')
     total_num_steps = steps_per_epoch * args.num_steps
     for step in range(total_num_steps):
-        data, target = data.to(device), target.to(device)
+        # Pre-epoch callbacks.
+        epoch = int(step / steps_per_epoch)
+        if step % steps_per_epoch == 0:
+            for callback in callbacks:
+                callback.on_epoch_begin(epoch, step)
+        # Get data and predictions.
+        (data, labels) = next()
+        data, labels = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
-        loss = F.nll_loss(output, target)
+        # Compute loss and backpropagate.
+        if args.contrastive:
+            loss = model.contrastive_loss(output, labels)
+            output = model.get_probs(output) # Get actual probabilities for notes (for logging)
+        else:
+            loss = torch.nn.functional.binary_cross_entropy(output, labels)
         loss.backward()
         optimizer.step()
+        # Compute train metrics.
+        # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
+        if (step+1) % log_train_metrics_interval == 0:
+            for name, metric in metrics.items():
+                wandb.log({ f'train_{name}': metric(output, labels)}, step=step)
+        # Post-epoch callbacks.
+        if (step+1) % steps_per_epoch == 0:
+            # Compute validation metrics.
+
         
         
     # print('model.fit()')

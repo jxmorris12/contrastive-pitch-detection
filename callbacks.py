@@ -1,16 +1,15 @@
 from typing import Dict
 
+import abc
 import collections
 import math
 import random
 
-import keras
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import sklearn
 import sklearn.manifold
-import tensorflow as tf
 import wandb
 import tqdm
 
@@ -20,7 +19,12 @@ from utils.plot_mp3_predictions import load_wav, predict_audio_file
 import matplotlib # stackoverflow.com/questions/45993879
 matplotlib.use('Agg') 
 
-class LogRecordingSpectrogramCallback(keras.callbacks.Callback):
+class Callback(abc.ABC):
+    def on_epoch_begin(self, epoch: int, step: int):
+        pass
+
+
+class LogRecordingSpectrogramCallback(Callback):
     """ Generates a spectrogram based on model predictions for a given mp3 file.
     """
     def __init__(self, args, audio_file_path='samples/audio/day_tripper_intro.mp3',
@@ -51,18 +55,17 @@ class LogRecordingSpectrogramCallback(keras.callbacks.Callback):
     def _log_spectrogram(self, epoch: int):
         image = self.get_spectrogram()
         name = f"spectrogram for {self.audio_file_path}"
-        tf.summary.image(name, [image])
         
         wandb.log({"spectrograms": [wandb.Image(image, caption=name)]}, step=epoch)
     
-    def on_epoch_begin(self, epoch, logs=None):
+    def on_epoch_begin(self, epoch: int, step: int):
         """ At the beginning of each epoch, test model on chunks of the specified 
         file and log to TensorBoard.
         """
         self._log_spectrogram(epoch)
         
 
-class VisualizePredictionsCallback(tf.keras.callbacks.Callback):  
+class VisualizePredictionsCallback(Callback):  
     """ Gets predictions from model using data from ``val_generator``, using
     ``num_val_batches`` of data. Runs every ``every_n_epochs`` epochs. Logs
     some instance-level and aggregated predictions to Weights & Biases.
@@ -77,19 +80,19 @@ class VisualizePredictionsCallback(tf.keras.callbacks.Callback):
         self.num_val_batches = min(num_validation_steps, math.ceil( num_validation_points / args.batch_size))
         print(f'VisualizePredictionsCallback initialized with {self.num_val_batches} validation batches')
     
-    def _log_overall_metrics(self, epoch, x, y_true, y_pred, frame_info):
+    def _log_overall_metrics(self, step, x, y_true, y_pred, frame_info):
         # Plot histogram of predictions
         hist_x = np.arange(self.args.min_midi, self.args.max_midi + 1)
         y_true_count = (y_true > 0.5).sum(axis=0)
         plt.figure(figsize=(12,3))
         sns.barplot(x=hist_x, y=y_true_count).set(title='y_true histogram')
-        wandb.log({"y_true_hist": wandb.Image(plt)}, step=epoch)
+        wandb.log({"y_true_hist": wandb.Image(plt)}, step=step)
         plt.cla()
         plt.close()
         y_pred_count = (y_pred > 0.5).sum(axis=0)
         plt.figure(figsize=(12,3))
         sns.barplot(x=hist_x, y=y_pred_count).set(title='y_pred histogram')
-        wandb.log({"y_pred_hist": wandb.Image(plt)}, step=epoch)
+        wandb.log({"y_pred_hist": wandb.Image(plt)}, step=step)
         plt.cla()
         plt.close()
     
@@ -104,16 +107,16 @@ class VisualizePredictionsCallback(tf.keras.callbacks.Callback):
         sns.barplot(x=x, y=preds)
         return wandb.Image(pyplot_to_numpy(plt))
     
-    def _plot_pred_types(self, epoch: int, pred_types: Dict[str, int]):
+    def _plot_pred_types(self, step: int, pred_types: Dict[str, int]):
         """ Plots a bar graph of prediction types """
         data = [[pred_type, count] for (pred_type, count) in pred_types.items()]
         table = wandb.Table(data=data, columns = ["prediction_type", "count"])
         wandb.log({
             "val_pred_types" : 
             wandb.plot.bar(table, "prediction_type", "count", title="Validation prediction types")
-        }, step=epoch)
+        }, step=step)
 
-    def _log_instance_level_metrics(self, epoch, x, y_true, y_pred, frame_info, max_instance_level_plots=128):
+    def _log_instance_level_metrics(self, step, x, y_true, y_pred, frame_info, max_instance_level_plots=128):
         table_columns = [
             'dataset', 'track', 'start_time', 'end_time', 
             'waveform', 'preds', 'pred_labels', 'true_labels', 
@@ -153,7 +156,7 @@ class VisualizePredictionsCallback(tf.keras.callbacks.Callback):
             pred_types[pred_type] += 1
             table.add_data(*row)
         
-        self._plot_pred_types(epoch, pred_types)
+        self._plot_pred_types(step, pred_types)
         
         # Create an Artifact (versioned folder)
         artifact = wandb.Artifact(name="nsynth_chord_datasets", type="dataset")
@@ -164,9 +167,10 @@ class VisualizePredictionsCallback(tf.keras.callbacks.Callback):
         # Finally, log the artifact
         wandb.log_artifact(artifact)
     
-    def on_epoch_end(self, epoch, logs={}):
+    def on_epoch_begin(self, epoch: int, step: int):
         # Have to re-get predictions because of this issue: 
         # https://github.com/keras-team/keras/issues/10472
+        # TODO(jxm): Since we switched to pytorch, this isn't necessary. Optimize?
         rand_idxs = random.sample(range(self.num_validation_steps), self.num_val_batches)
         x, y_true, y_pred, frame_info = [], [], [], []
         for idx in rand_idxs:
@@ -186,44 +190,40 @@ class VisualizePredictionsCallback(tf.keras.callbacks.Callback):
         y_true = np.vstack(y_true)
         y_pred = np.vstack(y_pred)
         print(f'VisualizePredictionsCallback analyzing {len(frame_info)} predictions')
-        self._log_overall_metrics(epoch, x, y_true, y_pred, frame_info)
+        self._log_overall_metrics(step, x, y_true, y_pred, frame_info)
 
         if (epoch + 1) % self.every_n_epochs > 0:
-            print(f'Skipping VisualizePredictionsCallback instance-level predictions at epoch {epoch}')
+            print(f'Skipping VisualizePredictionsCallback instance-level predictions at epoch {epoch} / step {step}')
             return
         else:
-            print(f'Logging VisualizePredictionsCallback instance-level predictions at epoch {epoch}')
-            self._log_instance_level_metrics(epoch, x, y_true, y_pred, frame_info)
+            print(f'Logging VisualizePredictionsCallback instance-level predictions at epoch {epoch} / step {step}')
+            self._log_instance_level_metrics(step, x, y_true, y_pred, frame_info)
 
-class LogNoteEmbeddingStatisticsCallback(keras.callbacks.Callback):
+class LogNoteEmbeddingStatisticsCallback(Callback):
     """ Plots some statistics related to a note embedding matrix.
     """
     def __init__(self, model):
-        assert hasattr(model, 'embedding_table')
-        self.model = model
+        assert hasattr(model, 'embedding')
+        self.embedding = model.embedding
 
-    @property
-    def embedding_table(self):
-        return self.model.embedding_table
-
-    def _log_embedding_stats(self, epoch: int):
+    def _log_embedding_stats(self, step: int):
         """Log embedding norm, mean, and std."""
-        emb_norm = tf.math.reduce_mean(tf.norm(self.embedding_table, axis=1))
-        emb_std = tf.math.reduce_mean(tf.math.reduce_std(self.embedding_table, axis=0))
+        emb_norm = torch.mean(torch.norm(self.embedding, p=2, axis=1))
+        emb_std = torch.mean(torch.std(self.embedding, axis=0))
         wandb.log(
             {
                 "note_embedding__norm": emb_norm,
                 "note_embedding__std": emb_std,
             }, 
-            step=epoch
+            step=step
         )
 
-    def _plot_embedding_tsne(self, epoch: int):
+    def _plot_embedding_tsne(self, step: int):
         """Plot a 2D TSNE of all the embeddings, colored by note."""
-        num_notes, emb_dim = self.embedding_table.shape
+        num_notes, emb_dim = self.embedding.shape
         # create the TSNE
         tsne = sklearn.manifold.TSNE(n_components=2, random_state=0, perplexity=5, learning_rate='auto', init='random')
-        emb_dim_2 = tsne.fit_transform(self.embedding_table)
+        emb_dim_2 = tsne.fit_transform(self.embedding)
         # 12 colors, one per note
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', 
                   '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#0e3f43', '#e0e0e0']
@@ -232,23 +232,23 @@ class LogNoteEmbeddingStatisticsCallback(keras.callbacks.Callback):
             emb_colors.append(colors[i % len(colors)])
         # scatterplot of TSNE results
         plt.scatter(emb_dim_2[:,0], emb_dim_2[:,1], c=emb_colors)
-        wandb.log({"note_embedding__tsne": wandb.Image(plt)}, step=epoch)
+        wandb.log({"note_embedding__tsne": wandb.Image(plt)}, step=step)
         plt.cla()
         plt.close()
         
-    def _plot_embedding_similarities(self, epoch: int):
+    def _plot_embedding_similarities(self, step: int):
         """Plots all-to-all similarities between the embeddings."""
         with sns.axes_style("white"):
             fig, ax = plt.subplots(figsize=(10, 8))
-            ax = sns.heatmap(self.embedding_table @ tf.transpose(self.embedding_table), square=True)
-        wandb.log({"note_embedding__similarities": wandb.Image(plt)}, step=epoch)
+            ax = sns.heatmap(self.embedding @ self.embedding.T, square=True)
+        wandb.log({"note_embedding__similarities": wandb.Image(plt)}, step=step)
         plt.cla()
         plt.close()
     
-    def on_epoch_begin(self, epoch, logs=None):
+    def on_epoch_begin(self, epoch: int, step: int):
         """ At the beginning of each epoch, log embedding stats.
         """
-        self._log_embedding_stats(epoch)
-        self._plot_embedding_tsne(epoch)
-        self._plot_embedding_similarities(epoch)
+        self._log_embedding_stats(step)
+        self._plot_embedding_tsne(step)
+        self._plot_embedding_similarities(step)
         
