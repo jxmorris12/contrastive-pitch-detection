@@ -66,14 +66,14 @@ class AudioDataGenerator(torch.utils.data.Dataset):
             x = x - x.mean(axis=1)[:, np.newaxis]
             x = x / x.std(axis=1)[:, np.newaxis]
         
-        x = torch.tensor(x)
-        y = torch.tensor(y)
+        x = torch.tensor(x, dtype=torch.float32)
+        y = torch.tensor(y, dtype=torch.float32)
         
         if self.label_format is None:
             if get_info:
-                return x, x, info
+                return x, info
             else:
-                return (x, x)
+                return x
         else:
             if get_info:
                 return x, y, info

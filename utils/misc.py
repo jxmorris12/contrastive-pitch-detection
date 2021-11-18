@@ -131,6 +131,8 @@ class TrackFrameSampler:
     
     def __getitem__(self, idx, get_info=False):
         """ Gets the next batch of audio. """
+        if idx >= len(self):
+            raise StopIteration
         batch_track_frame_index_pairs = self.track_frame_index_pairs[idx * self.batch_size : (idx + 1) * self.batch_size]
         batch_x = []
         batch_y = []
@@ -160,7 +162,7 @@ class TrackFrameSampler:
                         dataset_name=track.dataset_name, track_name=track.track_name,
                         sample_rate=sample_rate, start_time=start_time, end_time=end_time
                     ))
-                
+
         if get_info:
             return np.vstack(batch_x), np.vstack(batch_y), track_info
         else:

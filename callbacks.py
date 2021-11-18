@@ -105,7 +105,7 @@ class VisualizePredictionsCallback(Callback):
         plt.figure(figsize=(8,2))
         x = np.arange(self.args.min_midi, self.args.max_midi + 1)
         sns.barplot(x=x, y=preds)
-        wandb_fig = wandb.Plotly(plt) # TODO: if this doesn't work try Plotly(fig) ?
+        wandb_fig = wandb.Image(plt)
         plt.cla()
         plt.close()
         return wandb_fig
@@ -174,7 +174,7 @@ class VisualizePredictionsCallback(Callback):
     def on_epoch_begin(self, epoch: int, step: int):
         # Have to re-get predictions because of this issue: 
         # https://github.com/keras-team/keras/issues/10472
-        # TODO(jxm): Since we switched to pytorch, this isn't necessary. Optimize?
+        # TODO(jxm): Since we switched to pytorch, this isn't necessary. We should re-use the predictions!
         rand_idxs = random.sample(range(self.num_validation_steps), self.num_val_batches)
         x, y_true, y_pred, frame_info = [], [], [], []
         for idx in rand_idxs:
@@ -186,8 +186,10 @@ class VisualizePredictionsCallback(Callback):
             y_true.append(y_true_batch)
             frame_info.extend(frame_info_batch)
             with torch.no_grad():
-                predictions = self.model(x_batch.to(device)).cpu()
-            y_pred.append(predictions)
+                predictions = self.model(x_batch.to(device))
+                if self.args.contrastive:
+                    predictions = self.model.get_probs(predictions)
+            y_pred.append(predictions.cpu())
         # Aggregate predictions from all batches
         x = np.vstack(x)
         y_true = np.vstack(y_true)
@@ -207,12 +209,16 @@ class LogNoteEmbeddingStatisticsCallback(Callback):
     """
     def __init__(self, model):
         assert hasattr(model, 'embedding')
-        self.embedding = model.embedding
+        self.model = model
+    
+    @property
+    def embedding(self) -> torch.Tensor:
+        return self.model.embedding.weight.detach().cpu()
 
     def _log_embedding_stats(self, step: int):
         """Log embedding norm, mean, and std."""
-        emb_norm = torch.mean(torch.norm(self.embedding, p=2, axis=1))
-        emb_std = torch.mean(torch.std(self.embedding, axis=0))
+        emb_norm = torch.mean(torch.norm(self.embedding, p=2, dim=1))
+        emb_std = self.embedding.numpy().std(1).mean()
         wandb.log(
             {
                 "note_embedding__norm": emb_norm,

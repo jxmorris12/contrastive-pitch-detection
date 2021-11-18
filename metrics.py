@@ -7,7 +7,7 @@ class Metric(abc.ABC):
     def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
         pass
 
-def categorical_acc(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+def categorical_accuracy(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
     """The number of multi-class predictions for y_true that are 100% correct (i.e. all classes
         in a given sample must be correctly predicted).
     """

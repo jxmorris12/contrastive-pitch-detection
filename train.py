@@ -1,11 +1,13 @@
 import argparse
 import json
+import logging
 import os
 import pathlib
 import random
 import re
 import time
 import torch
+import tqdm
 import wandb
 
 import numpy as np
@@ -15,13 +17,14 @@ from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
 from models import ContrastiveModel, CREPE
 from metrics import (
-    NStringChordAccuracy, pitch_number_acc,
+    categorical_accuracy, pitch_number_acc, NStringChordAccuracy,
     precision, recall, f1
 )
 
+logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# ask the OS how many cpus we have (stackoverflow.com/questions/1006289)
-num_cpus = len(os.sched_getaffinity(0))
+num_cpus = len(os.sched_getaffinity(0)) # ask the OS how many cpus we have (stackoverflow.com/questions/1006289)
+
 def set_random_seed(r):
     random.seed(r)
     np.random.seed(r)
@@ -61,8 +64,9 @@ def parse_args():
 
 def get_model(args):
     if args.contrastive:
-        crepe = CREPE(model='tiny', num_output_nodes=88, out_activation=None)
-        return ContrastiveModel(crepe, args.min_midi, args.max_midi, args.embedding_dim)
+        contrastive_embedding_dim = 256
+        crepe = CREPE(model='tiny', num_output_nodes=contrastive_embedding_dim, out_activation=None)
+        return ContrastiveModel(crepe, args.min_midi, args.max_midi, contrastive_embedding_dim)
     else:
         return CREPE(model='tiny', num_output_nodes=88, out_activation='sigmoid')
     
@@ -133,13 +137,13 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
     
     metrics = {
+        'categorical_accuracy': categorical_accuracy,
         'precision': precision,
         'recall': recall,
         'f1': f1,
         'pitch_number_acc': pitch_number_acc,
         'n_string_acc_multi': NStringChordAccuracy('multi')
     }
-    # metrics = ['categorical_accuracy', pitch_number_acc]
     for n_strings in range(1, 7):
         if n_strings > args.max_polyphony:
             # Don't show metrics for chords we're not training on
@@ -162,14 +166,14 @@ def main():
     callbacks = []
     # TODO(jxm): reinstate this callback with a piano piece
     # callbacks.append(LogRecordingSpectrogramCallback(args))
-    callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps))
+    # callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps))
     if args.contrastive:
         callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     
     log_train_metrics_interval = int(steps_per_epoch / 10.0)
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.epochs} epochs) = {steps_per_epoch * args.epochs} ')
     total_num_steps = steps_per_epoch * args.epochs
-    for step in range(total_num_steps):
+    for step in tqdm.trange(total_num_steps, desc='Training'):
         # Pre-epoch callbacks.
         epoch = int(step / steps_per_epoch)
         if step % steps_per_epoch == 0:
@@ -187,13 +191,14 @@ def main():
         else:
             loss = torch.nn.functional.binary_cross_entropy(output, labels)
         wandb.log({ 'train_loss': loss }, step=step)
+        tqdm.tqdm.write(f'Loss = {loss.item()}')
         loss.backward()
         optimizer.step()
         scheduler.step()
         # Compute train metrics.
         # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
         if (step+1) % log_train_metrics_interval == 0:
-            logging.info('*** Computing training metrics for epoch %d (step %d) ***', epoch, step)
+            logger.info('*** Computing training metrics for epoch %d (step %d) ***', epoch, step)
             for name, metric in metrics.items():
                 metric_name = f'train_{name}'
                 metric_val = metric(output, labels)
@@ -202,7 +207,7 @@ def main():
         if (step+1) % steps_per_epoch == 0:
             # Compute validation metrics.
             # TODO(jxm): avg validation metrics?
-            logging.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
+            logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
             for batch in val_generator:
                 (data, labels) = batch
                 data, labels = data.to(device), labels.to(device)
@@ -220,7 +225,7 @@ def main():
                     logging.info('\t%s = %f', metric_name, metric_val)
                     wandb.log({ metric_name: metric_val}, step=step)
             # Also shuffle training data after each epoch.
-            train_data_loader.on_epoch_end()
+            train_generator.on_epoch_end()
     
     print(f'training done! model saved to {model_folder}')
 
