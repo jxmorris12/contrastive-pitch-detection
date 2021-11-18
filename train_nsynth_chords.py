@@ -185,19 +185,30 @@ def main():
         val_generator._callable(args.epochs), output_types=dataset_output_types
     ).prefetch(tf.data.experimental.AUTOTUNE)
     num_cpus = len(os.sched_getaffinity(0))
+
+    
+    print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.num_steps} epochs) = {steps_per_epoch * args.num_steps} ')
+    total_num_steps = steps_per_epoch * args.num_steps
+    for step in range(total_num_steps):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = F.nll_loss(output, target)
+        loss.backward()
+        optimizer.step()
         
         
-    print('model.fit()')
-    model.fit(
-        x=train_generator,
-        steps_per_epoch=steps_per_epoch,
-        validation_steps=validation_steps,
-        validation_data=val_generator,
-        use_multiprocessing=(num_cpus > 1),
-        workers=num_cpus,
-        epochs=args.epochs, 
-        callbacks=callbacks,
-    )
+    # print('model.fit()')
+    # model.fit(
+    #     x=train_generator,
+    #     steps_per_epoch=steps_per_epoch,
+    #     validation_steps=validation_steps,
+    #     validation_data=val_generator,
+    #     use_multiprocessing=(num_cpus > 1),
+    #     workers=num_cpus,
+    #     epochs=args.epochs, 
+    #     callbacks=callbacks,
+    # )
     
     print(f'training done! model saved to {model_folder}')
 
