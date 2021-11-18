@@ -10,13 +10,16 @@ import numpy as np
 import seaborn as sns
 import sklearn
 import sklearn.manifold
-import wandb
+import torch
 import tqdm
+import wandb
 
 from utils import get_prediction_type
 
 import matplotlib # stackoverflow.com/questions/45993879
 matplotlib.use('Agg') 
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class Callback(abc.ABC):
     def on_epoch_begin(self, epoch: int, step: int):
@@ -71,8 +74,9 @@ class VisualizePredictionsCallback(Callback):
     ``num_val_batches`` of data. Runs every ``every_n_epochs`` epochs. Logs
     some instance-level and aggregated predictions to Weights & Biases.
     """
-    def __init__(self, args, val_generator, num_validation_steps, every_n_epochs=3, num_validation_points=3*128):
+    def __init__(self, args, model, val_generator, num_validation_steps, every_n_epochs=3, num_validation_points=3*4):
         self.args = args
+        self.model = model
         self.val_generator = val_generator
         self.num_validation_steps = num_validation_steps
         self.every_n_epochs = every_n_epochs
@@ -181,9 +185,8 @@ class VisualizePredictionsCallback(Callback):
             x.append(x_batch)
             y_true.append(y_true_batch)
             frame_info.extend(frame_info_batch)
-            predictions = self.model.predict(x_batch)
-            if isinstance(predictions, dict): # support the multi-output setting
-                predictions = predictions['probs']
+            with torch.no_grad():
+                predictions = self.model(x_batch.to(device)).cpu()
             y_pred.append(predictions)
         # Aggregate predictions from all batches
         x = np.vstack(x)

@@ -25,8 +25,8 @@ num_cpus = len(os.sched_getaffinity(0))
 def set_random_seed(r):
     random.seed(r)
     np.random.seed(r)
-    torch.manual_seed(random_seed)
-    torch.cuda.manual_seed(random_seed)
+    torch.manual_seed(r)
+    torch.cuda.manual_seed(r)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model.')
@@ -61,11 +61,10 @@ def parse_args():
 
 def get_model(args):
     if args.contrastive:
-        crepe = CREPE(model='tiny', num_output_nodes=88, out_activation='sigmoid')
+        crepe = CREPE(model='tiny', num_output_nodes=88, out_activation=None)
         return ContrastiveModel(crepe, args.min_midi, args.max_midi, args.embedding_dim)
     else:
-        out_activation = None
-        return crepe
+        return CREPE(model='tiny', num_output_nodes=88, out_activation='sigmoid')
     
 def main():
     args = parse_args()
@@ -126,11 +125,11 @@ def main():
     print('len(train_generator):', len(train_generator))
     print('len(val_generator):', len(val_generator))
     
-    model = get_model(args)
-    model.summary()
+    model = get_model(args).to(device)
+    print(model)
 
     print('training with optimizer Adam')
-    optimizer = torch.optim.Adam(model, lr=args.learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
     
     metrics = {
@@ -161,14 +160,15 @@ def main():
     # TODO(jxm): implement saving best models with pytorch
     
     callbacks = []
-    callbacks.append(LogRecordingSpectrogramCallback(args))
-    callbacks.append(VisualizePredictionsCallback(args, val_generator, validation_steps))
+    # TODO(jxm): reinstate this callback with a piano piece
+    # callbacks.append(LogRecordingSpectrogramCallback(args))
+    callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps))
     if args.contrastive:
         callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     
     log_train_metrics_interval = int(steps_per_epoch / 10.0)
-    print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.num_steps} epochs) = {steps_per_epoch * args.num_steps} ')
-    total_num_steps = steps_per_epoch * args.num_steps
+    print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.epochs} epochs) = {steps_per_epoch * args.epochs} ')
+    total_num_steps = steps_per_epoch * args.epochs
     for step in range(total_num_steps):
         # Pre-epoch callbacks.
         epoch = int(step / steps_per_epoch)
@@ -177,7 +177,7 @@ def main():
                 callback.on_epoch_begin(epoch, step)
         # Get data and predictions.
         (data, labels) = train_generator[step % len(train_generator)]
-        data, labels = data.to(device), target.to(device)
+        data, labels = data.to(device), labels.to(device)
         optimizer.zero_grad()
         output = model(data)
         # Compute loss and backpropagate.
@@ -204,8 +204,8 @@ def main():
             # TODO(jxm): avg validation metrics?
             logging.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
             for batch in val_generator:
-                (data, labels) = next()
-                data, labels = data.to(device), target.to(device)
+                (data, labels) = batch
+                data, labels = data.to(device), labels.to(device)
                 with torch.no_grad():
                     output = model(data)
                     if args.contrastive:

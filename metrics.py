@@ -49,9 +49,8 @@ class NStringChordAccuracy(Metric):
     `n`: number of chords to consider. also considers 'multi', which includes 
         all chords with n>1 strings 
     """
-    def __init__(self, n, **kwargs):
+    def __init__(self, n):
         assert (type(n) == int) or (n == 'multi')
-        super().__init__(name=f'chord_{n}_string_accuracy', **kwargs)
         self.n = n
     
     def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
