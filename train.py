@@ -190,14 +190,14 @@ def main():
             output = model.get_probs(output) # Get actual probabilities for notes (for logging)
         else:
             loss = torch.nn.functional.binary_cross_entropy(output, labels)
-        wandb.log({ 'train_loss': loss }, step=step)
-        tqdm.tqdm.write(f'Loss = {loss.item()}')
         loss.backward()
         optimizer.step()
         scheduler.step()
         # Compute train metrics.
         # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
         if (step+1) % log_train_metrics_interval == 0:
+            wandb.log({ 'train_loss': loss }, step=step)
+            tqdm.tqdm.write(f'Loss = {loss.item()}')
             logger.info('*** Computing training metrics for epoch %d (step %d) ***', epoch, step)
             for name, metric in metrics.items():
                 metric_name = f'train_{name}'

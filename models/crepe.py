@@ -11,6 +11,9 @@ CREPE_MODEL_CAPACITIES = {
     'tiny': 4, 'small': 8, 'medium': 16, 'large': 24, 'full': 32
 }
 
+# TODO(jxm): remove this device statement once dynamic inference problem is fixed
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class CREPE(torch.nn.Module):
     """CREPE model definition"""
 
@@ -94,15 +97,16 @@ class CREPE(torch.nn.Module):
         self.conv6_BN = batch_norm_fn(
             num_features=out_channels[5])
 
-        self.classifier = torch.nn.Linear(
-            in_features=self.in_features,
-            out_features=num_output_nodes)
+        self.classifier = None
         
         assert out_activation in ['sigmoid', None]
         self.out_activation = out_activation
 
+        self.num_output_nodes = num_output_nodes
+
     def forward(self, x, embed=False):
         # Forward pass through first five layers
+        batch_size, frame_length = x.shape
         x = self.embed(x)
 
         if embed:
@@ -111,8 +115,21 @@ class CREPE(torch.nn.Module):
         # Forward pass through layer six
         x = self.layer(x, self.conv6, self.conv6_BN)
 
-        # shape=(batch, self.in_features)
-        x = x.permute(0, 2, 1, 3).reshape(-1, self.in_features)
+        if self.classifier is None:
+            # TODO(jxm): The padding in this class is specifically worked out for frame
+            # length 1024, and we probably want 16000 or something else different, so we
+            # should workout the math so that we know exactly what length vector comes
+            # out the other side. But for now we'll just dynamically create the linear
+            # layer so that it always works. But this isn't ideal.
+            assert x.numel() % batch_size == 0
+            features = int(x.numel() / batch_size)
+            self.classifier = torch.nn.Linear(
+                    in_features=features,
+                    out_features=self.num_output_nodes).to(device)
+
+
+        # shape=(batch, features)
+        x = x.permute(0, 2, 1, 3).reshape(batch_size, -1)
 
         # Compute logits
         x = self.classifier(x)
@@ -131,7 +148,7 @@ class CREPE(torch.nn.Module):
         x = x[:, None, :, None]
 
         # Forward pass through first five layers
-        x = self.layer(x, self.conv1, self.conv1_BN, (0, 0, 254, 254))
+        x = self.layer(x, self.conv1, self.conv1_BN)
         x = self.layer(x, self.conv2, self.conv2_BN)
         x = self.layer(x, self.conv3, self.conv3_BN)
         x = self.layer(x, self.conv4, self.conv4_BN)
