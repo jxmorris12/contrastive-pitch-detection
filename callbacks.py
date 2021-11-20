@@ -56,17 +56,17 @@ class LogRecordingSpectrogramCallback(Callback):
             return_image=True
         )
     
-    def _log_spectrogram(self, epoch: int):
+    def _log_spectrogram(self, epoch: int, step: int):
         image = self.get_spectrogram()
         name = f"spectrogram for {self.audio_file_path}"
         
-        wandb.log({"spectrograms": [wandb.Image(image, caption=name)]}, step=epoch)
+        wandb.log({"spectrograms": [wandb.Image(image, caption=name)], 'epoch': epoch, 'step': step})
     
     def on_epoch_begin(self, epoch: int, step: int):
         """ At the beginning of each epoch, test model on chunks of the specified 
         file and log to TensorBoard.
         """
-        self._log_spectrogram(epoch)
+        self._log_spectrogram(epoch, step)
         
 
 class VisualizePredictionsCallback(Callback):  
@@ -85,19 +85,19 @@ class VisualizePredictionsCallback(Callback):
         self.num_val_batches = min(num_validation_steps, math.ceil( num_validation_points / args.batch_size))
         print(f'VisualizePredictionsCallback initialized with {self.num_val_batches} validation batches')
     
-    def _log_overall_metrics(self, step, x, y_true, y_pred, frame_info):
+    def _log_overall_metrics(self, epoch, step, x, y_true, y_pred, frame_info):
         # Plot histogram of predictions
         hist_x = np.arange(self.args.min_midi, self.args.max_midi + 1)
         y_true_count = (y_true > 0.5).sum(axis=0)
         plt.figure(figsize=(12,3))
         sns.barplot(x=hist_x, y=y_true_count).set(title='y_true histogram')
-        wandb.log({"y_true_hist": wandb.Image(plt)}, step=step)
+        wandb.log({"y_true_hist": wandb.Image(plt), 'epoch': epoch, 'step': step})
         plt.cla()
         plt.close()
         y_pred_count = (y_pred > 0.5).sum(axis=0)
         plt.figure(figsize=(12,3))
         sns.barplot(x=hist_x, y=y_pred_count).set(title='y_pred histogram')
-        wandb.log({"y_pred_hist": wandb.Image(plt)}, step=step)
+        wandb.log({"y_pred_hist": wandb.Image(plt), 'epoch': epoch, 'step': step})
         plt.cla()
         plt.close()
     
@@ -116,10 +116,11 @@ class VisualizePredictionsCallback(Callback):
         table = wandb.Table(data=data, columns = ["prediction_type", "count"])
         wandb.log({
             "val_pred_types" : 
-            wandb.plot.bar(table, "prediction_type", "count", title="Validation prediction types")
-        }, step=step)
+                wandb.plot.bar(table, "prediction_type", "count", title="Validation prediction types"),
+            'epoch': epoch, 'step': step
+        })
 
-    def _log_instance_level_metrics(self, step, x, y_true, y_pred, frame_info, max_instance_level_plots=128):
+    def _log_instance_level_metrics(self, epoch, step, x, y_true, y_pred, frame_info, max_instance_level_plots=128):
         table_columns = [
             'dataset', 'track', 'start_time', 'end_time', 
             'waveform', 'preds', 'pred_labels', 'true_labels', 
@@ -160,8 +161,9 @@ class VisualizePredictionsCallback(Callback):
             pred_types[pred_type] += 1
             table.add_data(*row)
         
-        self._plot_pred_types(step, pred_types)
+        self._plot_pred_types(epoch, step, pred_types)
         
+        # TODO(jxm) fix this with a proper artifact
         # Create an Artifact (versioned folder)
         artifact = wandb.Artifact(name="nsynth_chord_datasets", type="dataset")
         
@@ -195,14 +197,14 @@ class VisualizePredictionsCallback(Callback):
         y_true = np.vstack(y_true)
         y_pred = np.vstack(y_pred)
         print(f'VisualizePredictionsCallback analyzing {len(frame_info)} predictions')
-        self._log_overall_metrics(step, x, y_true, y_pred, frame_info)
+        self._log_overall_metrics(epoch, step, x, y_true, y_pred, frame_info)
 
         if (epoch + 1) % self.every_n_epochs > 0:
             print(f'Skipping VisualizePredictionsCallback instance-level predictions at epoch {epoch} / step {step}')
             return
         else:
             print(f'Logging VisualizePredictionsCallback instance-level predictions at epoch {epoch} / step {step}')
-            self._log_instance_level_metrics(step, x, y_true, y_pred, frame_info)
+            self._log_instance_level_metrics(epoch, step, x, y_true, y_pred, frame_info)
 
 class LogNoteEmbeddingStatisticsCallback(Callback):
     """ Plots some statistics related to a note embedding matrix.
@@ -215,7 +217,7 @@ class LogNoteEmbeddingStatisticsCallback(Callback):
     def embedding(self) -> torch.Tensor:
         return self.model.embedding.weight.detach().cpu()
 
-    def _log_embedding_stats(self, step: int):
+    def _log_embedding_stats(self, epoch: int, step: int):
         """Log embedding norm, mean, and std."""
         emb_norm = torch.mean(torch.norm(self.embedding, p=2, dim=1))
         emb_std = self.embedding.numpy().std(1).mean()
@@ -223,11 +225,11 @@ class LogNoteEmbeddingStatisticsCallback(Callback):
             {
                 "note_embedding__norm": emb_norm,
                 "note_embedding__std": emb_std,
+                'epoch': epoch, 'step': step
             }, 
-            step=step
         )
 
-    def _plot_embedding_tsne(self, step: int):
+    def _plot_embedding_tsne(self, epoch: int, step: int):
         """Plot a 2D TSNE of all the embeddings, colored by note."""
         num_notes, emb_dim = self.embedding.shape
         # create the TSNE
@@ -241,23 +243,23 @@ class LogNoteEmbeddingStatisticsCallback(Callback):
             emb_colors.append(colors[i % len(colors)])
         # scatterplot of TSNE results
         plt.scatter(emb_dim_2[:,0], emb_dim_2[:,1], c=emb_colors)
-        wandb.log({"note_embedding__tsne": wandb.Image(plt)}, step=step)
+        wandb.log({"note_embedding__tsne": wandb.Image(plt), 'epoch': epoch, 'step': step})
         plt.cla()
         plt.close()
         
-    def _plot_embedding_similarities(self, step: int):
+    def _plot_embedding_similarities(self, epoch: int, step: int):
         """Plots all-to-all similarities between the embeddings."""
         with sns.axes_style("white"):
             fig, ax = plt.subplots(figsize=(10, 8))
             ax = sns.heatmap(self.embedding @ self.embedding.T, square=True)
-        wandb.log({"note_embedding__similarities": wandb.Image(plt)}, step=step)
+        wandb.log({"note_embedding__similarities": wandb.Image(plt), 'epoch': epoch, 'step': step})
         plt.cla()
         plt.close()
     
     def on_epoch_begin(self, epoch: int, step: int):
         """ At the beginning of each epoch, log embedding stats.
         """
-        self._log_embedding_stats(step)
-        self._plot_embedding_tsne(step)
-        self._plot_embedding_similarities(step)
+        self._log_embedding_stats(epoch, step)
+        self._plot_embedding_tsne(epoch, step)
+        self._plot_embedding_similarities(epoch, step)
         

@@ -63,6 +63,7 @@ def parse_args():
     return args
 
 def get_model(args):
+    # TODO(jxm): support nn.DataParallel here
     if args.contrastive:
         contrastive_embedding_dim = 256
         crepe = CREPE(model='tiny', num_output_nodes=contrastive_embedding_dim, out_activation=None)
@@ -170,9 +171,9 @@ def main():
     if args.contrastive:
         callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     
-    log_train_metrics_interval = int(steps_per_epoch / 10.0)
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.epochs} epochs) = {steps_per_epoch * args.epochs} ')
     total_num_steps = steps_per_epoch * args.epochs
+    log_interval = steps_per_epoch / 2.0 # TODO(jxm): argparse for logs_per_epoch?
     for step in tqdm.trange(total_num_steps, desc='Training'):
         # Pre-epoch callbacks.
         epoch = int(step / steps_per_epoch)
@@ -193,18 +194,20 @@ def main():
         loss.backward()
         optimizer.step()
         scheduler.step()
-        # Compute train metrics.
-        # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
-        if (step+1) % log_train_metrics_interval == 0:
-            wandb.log({ 'train_loss': loss }, step=step)
-            tqdm.tqdm.write(f'Loss = {loss.item()}')
+        # Post-epoch callbacks.
+        if (step+1) % log_interval == 0:
+            # Compute train metrics.
+            # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
+            train_metrics_dict = { 'train_loss': loss.item(), 'step': step, 'epoch': epoch }
+            tqdm.tqdm.write(f'Train loss = {loss.item()}')
             logger.info('*** Computing training metrics for epoch %d (step %d) ***', epoch, step)
+            train_metrics_dict = {}
             for name, metric in metrics.items():
                 metric_name = f'train_{name}'
                 metric_val = metric(output, labels)
-                wandb.log({ metric_name: metric_val }, step=step)
-        # Post-epoch callbacks.
-        if (step+1) % steps_per_epoch == 0:
+                train_metrics_dict[metric_name] = metric_val
+                logging.info('\t%s = %f', metric_name, metric_val)
+            wandb.log(train_metrics_dict)
             # Compute validation metrics.
             # TODO(jxm): avg validation metrics?
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
@@ -218,12 +221,13 @@ def main():
                         output = model.get_probs(output) # Get actual probabilities for notes (for logging)
                     else:
                         loss = torch.nn.functional.binary_cross_entropy(output, labels)
-                wandb.log({ 'val_loss': loss }, step=step)
+                val_metrics_dict = { 'val_loss': loss.item(), 'step': step, 'epoch': epoch  }
                 for name, metric in metrics.items():
                     metric_name = f'val_{name}'
                     metric_val = metric(output, labels)
+                    val_metrics_dict[metric_name] = metric_val
                     logging.info('\t%s = %f', metric_name, metric_val)
-                    wandb.log({ metric_name: metric_val}, step=step)
+                wandb.log(val_metrics_dict)
             # Also shuffle training data after each epoch.
             train_generator.on_epoch_end()
     
