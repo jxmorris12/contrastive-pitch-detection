@@ -1,6 +1,6 @@
 __pycache__/
 
-assets/
+models/assets/
 outputs/
 wandb/
 
