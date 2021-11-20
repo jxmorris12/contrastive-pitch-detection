@@ -4,10 +4,10 @@ import torch
 class Metric(abc.ABC):
     # TODO(jxm): Use this class to implement per-step averaging.
     @abc.abstractmethod
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
         pass
 
-def categorical_accuracy(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+def categorical_accuracy(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
     """The number of multi-class predictions for y_true that are 100% correct (i.e. all classes
         in a given sample must be correctly predicted).
     """
@@ -15,27 +15,27 @@ def categorical_accuracy(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Te
     all_correct = torch.all(y_true == y_pred, axis=1)
     return all_correct.sum() / len(all_correct)
 
-def precision(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+def precision(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
     """Precision: (True Positives) / (True Positives + False Positives)"""
     y_pred = torch.round(y_pred)
     true_positives = torch.sum(torch.logical_and((y_true == 1), (y_pred == 1)))
     false_positives = torch.sum(torch.logical_and((y_true == 0), (y_pred == 1)))
     return true_positives / (true_positives + false_positives)
 
-def recall(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+def recall(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
     """Recall: (True Positives) / (True Positives + False Negatives)"""
     y_pred = torch.round(y_pred)
     true_positives = torch.sum(torch.logical_and((y_true == 1), (y_pred == 1)))
     false_negatives = torch.sum(torch.logical_and((y_true == 1), (y_pred == 0)))
     return true_positives / (true_positives + false_negatives)
 
-def f1(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+def f1(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
     """F1: 2 * (Precision * Recall) / (Precision + Recall)"""
     p = precision(y_true, y_pred)
     r = recall(y_true, y_pred)
     return 2 * (p * r) / (p + r)
 
-def pitch_number_acc(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+def pitch_number_acc(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
     """The accuracy at which y_pred has the same number of 1s as y_true."""
     y_pred = torch.round(y_pred)
     num_true_ones = y_true.sum(1)
@@ -53,8 +53,8 @@ class NStringChordAccuracy(Metric):
         assert (type(n) == int) or (n == 'multi')
         self.n = n
     
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
-        strings_per_y = torch.sum(y_true, axis=1)
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+        strings_per_y = torch.sum(y_true, axis=1) # TODO(jxm) do I need keepdim=True? Does this metric work?
         
         if self.n == 'multi':
             pitches = (strings_per_y > 1)
