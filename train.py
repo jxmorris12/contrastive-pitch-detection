@@ -15,7 +15,7 @@ import numpy as np
 from callbacks import LogNoteEmbeddingStatisticsCallback, LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
-from models import ContrastiveModel, CREPE
+from models import ContrastiveModel, CREPE, Bytedance_Regress_pedal_Notes
 from metrics import (
     categorical_accuracy, pitch_number_acc, NStringChordAccuracy,
     precision, recall, f1
@@ -36,9 +36,10 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=2)
     parser.add_argument('--random_seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for adam optimizer')
+    parser.add_argument('--learning_rate', type=float, default=5e-4, help='Learning rate for adam optimizer')
     parser.add_argument('--sample_rate', type=int, default=16_000, help='audio will be resampled to this sample rate before being passed to the model (measured in Hz)')
     parser.add_argument('--frame_length', '--frame_length', type=int, default=1024, help='length of audio samples (in number of datapoints)')
+    parser.add_argument('--model', type=str, default='crepe', help='model to use for training', choices=('crepe', 'bytedance'))
 
     parser.add_argument('--val_split', type=float, default=0.05, help='Size of the validation set relative to total number of waveforms. Will be an approximate, since individual tracks are grouped within train or validation only.')
     parser.add_argument('--randomize_train_frame_offsets', '--rtfo', type=bool, default=True, 
@@ -64,13 +65,26 @@ def parse_args():
 
 def get_model(args):
     # TODO(jxm): support nn.DataParallel here
-    if args.contrastive:
-        contrastive_embedding_dim = 256
-        crepe = CREPE(model='tiny', num_output_nodes=contrastive_embedding_dim, out_activation=None)
-        return ContrastiveModel(crepe, args.min_midi, args.max_midi, contrastive_embedding_dim)
+    num_output_nodes = 256 if args.contrastive else 88
+    out_activation = 'softmax' if args.max_polyphony == 1 else 'sigmoid'
+    if args.model == 'bytedance':
+        model = Bytedance_Regress_pedal_Notes(
+            num_output_nodes, out_activation
+        )
+    elif args.model == 'crepe':
+        model = CREPE(
+            model='tiny',
+            num_output_nodes=num_output_nodes,
+            load_pretrained=True,
+            out_activation=out_activation
+        )
     else:
-        out_activation = 'softmax' if args.max_polyphony == 1 else 'sigmoid'
-        return CREPE(model='tiny', num_output_nodes=88, out_activation=out_activation)
+        raise ValueError(f'Invalid model {args.model}')
+
+    if args.contrastive:
+        return ContrastiveModel(model, args.min_midi, args.max_midi, num_output_nodes)
+    else:
+        return model
     
 def main():
     args = parse_args()
@@ -136,7 +150,7 @@ def main():
 
     print('training with optimizer Adam')
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     
     metrics = {
         'categorical_accuracy': categorical_accuracy,
@@ -174,17 +188,31 @@ def main():
     
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.epochs} epochs) = {steps_per_epoch * args.epochs} ')
     total_num_steps = steps_per_epoch * args.epochs
-    log_interval = steps_per_epoch / 2.0 # TODO(jxm): argparse for logs_per_epoch?
-    for step in tqdm.trange(total_num_steps, desc='Training'):
+    log_interval = int(steps_per_epoch / 5.0) # TODO(jxm): argparse for logs_per_epoch?
+    pbar = tqdm.trange(total_num_steps)
+    for step in pbar:
         # Pre-epoch callbacks.
         epoch = int(step / steps_per_epoch)
+        pbar.set_description(f'Training (Epoch {epoch})')
         if step % steps_per_epoch == 0:
+            # Callbacks.
             for callback in callbacks:
                 callback.on_epoch_begin(epoch, step)
+            # Adjust learning rate.
+            if epoch > 0: scheduler.step()
+            # Save model to disk.
+            if (epoch+1) % 10 == 0:
+                checkpoint = {
+                    'step': step, 
+                    'model': model.state_dict()
+                }
+                checkpoint_path = os.path.join(
+                    model_folder, f'{epoch}_epochs.pth')   
+                torch.save(checkpoint, checkpoint_path)
+                logging.info(f'Model saved to {checkpoint_path}')
         # Get data and predictions.
         (data, labels) = train_generator[step % len(train_generator)]
         data, labels = data.to(device), labels.to(device)
-        optimizer.zero_grad()
         output = model(data)
         # Compute loss and backpropagate.
         if args.contrastive:
@@ -194,7 +222,7 @@ def main():
             loss = torch.nn.functional.binary_cross_entropy(output, labels)
         loss.backward()
         optimizer.step()
-        scheduler.step()
+        optimizer.zero_grad()
         # Post-epoch callbacks.
         if (step+1) % log_interval == 0:
             # Compute train metrics.
@@ -212,7 +240,7 @@ def main():
                 logging.info('\t%s = %f', metric_name, metric_val)
             wandb.log(train_metrics_dict)
             # Compute validation metrics.
-            # TODO(jxm): avg validation metrics?
+            # TODO(jxm): avg validation metrics!
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
             for batch in val_generator:
                 (data, labels) = batch

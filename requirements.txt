@@ -12,6 +12,7 @@ seaborn
 sklearn
 torch
 torchaudio
+torchlibrosa
 tqdm
 transitions
 wandb

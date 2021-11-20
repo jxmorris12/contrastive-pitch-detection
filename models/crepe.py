@@ -1,4 +1,5 @@
 import functools
+import os
 
 import torch
 import torch.nn.functional as F
@@ -17,8 +18,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class CREPE(torch.nn.Module):
     """CREPE model definition"""
 
-    def __init__(self, model='full', num_output_nodes=88, out_activation='sigmoid'):
+    def __init__(self, model='full', num_output_nodes=88, out_activation='sigmoid',
+        load_pretrained=False):
         super().__init__()
+
+        # We only have pre-trained models for 'full' and 'tiny' (via torchcrepe package)
+        assert (not load_pretrained) or (model in ['tiny', 'full'])
 
         # Model-specific layer parameters
         assert model in CREPE_MODEL_CAPACITIES, f"unknown CREPE model size {model}"
@@ -100,10 +105,24 @@ class CREPE(torch.nn.Module):
         self.num_output_nodes = num_output_nodes
         self.classifier = torch.nn.Linear(
                     in_features=self.in_features,
-                    out_features=self.num_output_nodes).to(device)
+                    out_features=360)
+
+        self.dropout = torch.nn.Dropout(p=0.2)
+        self.classifier_out = torch.nn.Linear(
+                    in_features=360,
+                    out_features=self.num_output_nodes)
         
         assert out_activation in ['sigmoid', 'softmax', None]
         self.out_activation = out_activation
+
+        self.load_pretrained = load_pretrained
+        if self.load_pretrained:
+            file = os.path.join(os.path.dirname(__file__), 'assets', f'{model}.pth')
+            missing_keys, unexpected_keys = self.load_state_dict(
+                torch.load(file, map_location=device), strict=False)
+            # We added the extra classifier layer so there shouldn't be pretrained weights for it
+            assert missing_keys == ['classifier_out.weight', 'classifier_out.bias']
+            assert len(unexpected_keys) == 0
 
     def forward(self, x):
         # Forward pass through first five layers
@@ -119,10 +138,14 @@ class CREPE(torch.nn.Module):
         x = self.embed(x)
         x = x.permute(0, 2, 1, 3)
         x = x.reshape(batch_size, num_frames, -1)
+        # TODO(jxm): Could add a GRU layer for longer frames. Averaging is pretty dumb.
         x = x.mean(1)
 
         # Compute logits
         x = self.classifier(x)
+        x = self.dropout(x)
+        x = F.relu(x)
+        x = self.classifier_out(x)
         if self.out_activation == 'sigmoid':
             return torch.sigmoid(x)
         if self.out_activation == 'softmax':
