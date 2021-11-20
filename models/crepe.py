@@ -97,44 +97,36 @@ class CREPE(torch.nn.Module):
         self.conv6_BN = batch_norm_fn(
             num_features=out_channels[5])
 
-        self.classifier = None
+        self.num_output_nodes = num_output_nodes
+        self.classifier = torch.nn.Linear(
+                    in_features=self.in_features,
+                    out_features=self.num_output_nodes).to(device)
         
-        assert out_activation in ['sigmoid', None]
+        assert out_activation in ['sigmoid', 'softmax', None]
         self.out_activation = out_activation
 
-        self.num_output_nodes = num_output_nodes
-
-    def forward(self, x, embed=False):
+    def forward(self, x):
         # Forward pass through first five layers
         batch_size, frame_length = x.shape
+        # Reshape into frames of length 1024 for CREPE
+        padding = (0, (1024 - (frame_length%1024)) % 1024) # Pad last dimension along the end
+        # breakpoint()
+        x = F.pad(x, padding, "constant", 0.0)
+        batch_size, frame_length = x.shape
+        assert frame_length % 1024 == 0
+        num_frames = int(frame_length / 1024)
+        x = x.reshape(batch_size * num_frames, 1024)
         x = self.embed(x)
-
-        if embed:
-            return x
-
-        # Forward pass through layer six
-        x = self.layer(x, self.conv6, self.conv6_BN)
-
-        if self.classifier is None:
-            # TODO(jxm): The padding in this class is specifically worked out for frame
-            # length 1024, and we probably want 16000 or something else different, so we
-            # should workout the math so that we know exactly what length vector comes
-            # out the other side. But for now we'll just dynamically create the linear
-            # layer so that it always works. But this isn't ideal.
-            assert x.numel() % batch_size == 0
-            features = int(x.numel() / batch_size)
-            self.classifier = torch.nn.Linear(
-                    in_features=features,
-                    out_features=self.num_output_nodes).to(device)
-
-
-        # shape=(batch, features)
-        x = x.permute(0, 2, 1, 3).reshape(batch_size, -1)
+        x = x.permute(0, 2, 1, 3)
+        x = x.reshape(batch_size, num_frames, -1)
+        x = x.mean(1)
 
         # Compute logits
         x = self.classifier(x)
         if self.out_activation == 'sigmoid':
             return torch.sigmoid(x)
+        if self.out_activation == 'softmax':
+            return F.softmax(x, dim=-1)
         else:
             return x
 
@@ -148,11 +140,12 @@ class CREPE(torch.nn.Module):
         x = x[:, None, :, None]
 
         # Forward pass through first five layers
-        x = self.layer(x, self.conv1, self.conv1_BN)
+        x = self.layer(x, self.conv1, self.conv1_BN, (0, 0, 254, 254))
         x = self.layer(x, self.conv2, self.conv2_BN)
         x = self.layer(x, self.conv3, self.conv3_BN)
         x = self.layer(x, self.conv4, self.conv4_BN)
         x = self.layer(x, self.conv5, self.conv5_BN)
+        x = self.layer(x, self.conv6, self.conv6_BN)
 
         return x
 

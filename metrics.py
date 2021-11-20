@@ -31,8 +31,8 @@ def recall(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
 
 def f1(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
     """F1: 2 * (Precision * Recall) / (Precision + Recall)"""
-    p = precision(y_true, y_pred)
-    r = recall(y_true, y_pred)
+    p = precision(y_pred, y_true)
+    r = recall(y_pred, y_true)
     return 2 * (p * r) / (p + r)
 
 def pitch_number_acc(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:

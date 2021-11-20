@@ -69,7 +69,8 @@ def get_model(args):
         crepe = CREPE(model='tiny', num_output_nodes=contrastive_embedding_dim, out_activation=None)
         return ContrastiveModel(crepe, args.min_midi, args.max_midi, contrastive_embedding_dim)
     else:
-        return CREPE(model='tiny', num_output_nodes=88, out_activation='sigmoid')
+        out_activation = 'softmax' if args.max_polyphony == 1 else 'sigmoid'
+        return CREPE(model='tiny', num_output_nodes=88, out_activation=out_activation)
     
 def main():
     args = parse_args()
@@ -198,10 +199,12 @@ def main():
         if (step+1) % log_interval == 0:
             # Compute train metrics.
             # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
-            train_metrics_dict = { 'train_loss': loss.item(), 'step': step, 'epoch': epoch }
-            tqdm.tqdm.write(f'Train loss = {loss.item()}')
+            train_metrics_dict = { 
+                'train_loss': loss.item(),
+                'learning_rate': scheduler.get_last_lr()[0],
+                'step': step, 'epoch': epoch 
+            }
             logger.info('*** Computing training metrics for epoch %d (step %d) ***', epoch, step)
-            train_metrics_dict = {}
             for name, metric in metrics.items():
                 metric_name = f'train_{name}'
                 metric_val = metric(output, labels)
@@ -217,17 +220,18 @@ def main():
                 with torch.no_grad():
                     output = model(data)
                     if args.contrastive:
-                        loss = model.contrastive_loss(output, labels)
+                        val_loss = model.contrastive_loss(output, labels)
                         output = model.get_probs(output) # Get actual probabilities for notes (for logging)
                     else:
-                        loss = torch.nn.functional.binary_cross_entropy(output, labels)
-                val_metrics_dict = { 'val_loss': loss.item(), 'step': step, 'epoch': epoch  }
+                        val_loss = torch.nn.functional.binary_cross_entropy(output, labels)
+                val_metrics_dict = { 'val_loss': val_loss.item(), 'step': step, 'epoch': epoch  }
                 for name, metric in metrics.items():
                     metric_name = f'val_{name}'
                     metric_val = metric(output, labels)
                     val_metrics_dict[metric_name] = metric_val
                     logging.info('\t%s = %f', metric_name, metric_val)
                 wandb.log(val_metrics_dict)
+            tqdm.tqdm.write(f'Train loss = {loss.item():.4f} / Val loss = {val_loss.item():.4f}')
             # Also shuffle training data after each epoch.
             train_generator.on_epoch_end()
     
