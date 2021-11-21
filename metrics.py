@@ -64,4 +64,4 @@ class NStringChordAccuracy(Metric):
         y_true = y_true[pitches]
         y_pred = y_pred[pitches]
         
-        return categorical_accuracy(y_true, y_pred)
+        return categorical_accuracy(y_pred, y_true)

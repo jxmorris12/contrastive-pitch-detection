@@ -41,6 +41,8 @@ def parse_args():
     parser.add_argument('--frame_length', '--frame_length', type=int, default=1024, help='length of audio samples (in number of datapoints)')
     parser.add_argument('--model', type=str, default='crepe', help='model to use for training', choices=('crepe', 'bytedance'))
 
+    parser.add_argument('--randomize_val_and_training_data', '--rvatd', default=False,
+        action='store_true', help='shuffle validation and training data')
     parser.add_argument('--val_split', type=float, default=0.05, help='Size of the validation set relative to total number of waveforms. Will be an approximate, since individual tracks are grouped within train or validation only.')
     parser.add_argument('--randomize_train_frame_offsets', '--rtfo', type=bool, default=True, 
         help="Whether to add some randomness to frame offsets for training data")
@@ -55,8 +57,6 @@ def parse_args():
     args = parser.parse_args()
     args.min_midi = 21  # Bottom of piano
     args.max_midi = 108 # Top of piano
-    
-    assert 0 <= args.val_split < 1, "val split must be on [0, 1)"
     
     assert args.min_midi < args.max_midi, "Must provide a positive range of MIDI values where max_midi > min_midi"
     set_random_seed(args.random_seed)
@@ -75,7 +75,7 @@ def get_model(args):
         model = CREPE(
             model='tiny',
             num_output_nodes=num_output_nodes,
-            load_pretrained=True,
+            load_pretrained=False,
             out_activation=out_activation
         )
     else:
@@ -112,6 +112,14 @@ def main():
         batch_by_track=False, val_split=0.0
     )
     val_tracks = val_data_loader.load()
+
+    if args.randomize_val_and_training_data:
+        print('Shuffling val and train tracks')
+        num_val_tracks = len(val_tracks)
+        all_tracks = train_tracks + val_tracks
+        random.shuffle(all_tracks)
+        val_tracks = all_tracks[:num_val_tracks]
+        train_tracks = all_tracks[num_val_tracks:]
     
     #
     # create data augmenter and generators
