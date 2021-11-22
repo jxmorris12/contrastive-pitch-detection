@@ -1,7 +1,7 @@
 import torch
 from models import CREPE, Bytedance_Regress_pedal_Notes
 
-m = Bytedance_Regress_pedal_Notes(88, 'softmax', tiny=False).cuda()
+m = Bytedance_Regress_pedal_Notes(88, 'softmax', tiny=True).cuda()
 # m = CREPE(model='tiny', num_output_nodes=88, out_activation='sigmoid', load_pretrained=True).cuda()
 x = torch.rand((16,16000))
 print('input.shape:', x.shape)

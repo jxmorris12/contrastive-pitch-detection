@@ -1,3 +1,4 @@
+from typing import Tuple
 import random
 
 import numpy as np
@@ -19,9 +20,6 @@ class AudioDataGenerator(torch.utils.data.Dataset):
         outputted from the previous sample in time.
         
     ``tracks`` is a List<dataloader.Track> representing the tracks to sample from
-    
-    ``nsynth_chord_ratio`` determines the number of NSynth chords to generate
-        per 'real' datapoint. 2.0 would do 2 chords per input, 1.0 would do 1...
     """
     def __init__(self, 
             tracks, frame_length, max_polyphony,
@@ -55,9 +53,12 @@ class AudioDataGenerator(torch.utils.data.Dataset):
         """Denotes the number of batches per epoch."""
         return len(self.track_sampler)
 
-    def __getitem__(self, i, get_info=False):
-        x, y, info = self.track_sampler.__getitem__(i, get_info=get_info)
-        
+    def _get_track(self, i: int, get_info: bool) -> Tuple:
+        """Gets track `i`. Can be overridden by subclasses."""
+        return self.track_sampler.__getitem__(i, get_info=get_info)
+
+    def __getitem__(self, i: int, get_info=False):
+        x, y, info = self._get_track(i, get_info)
         if self.augmenter:
             x = np.apply_along_axis(lambda w: self.augmenter(w, self.sample_rate), 1, x)
         
@@ -84,6 +85,114 @@ class AudioDataGenerator(torch.utils.data.Dataset):
         """ Re-shuffle examples after each epoch. """
         self.track_sampler.on_epoch_end()
 
+class NSynthDataGenerator(AudioDataGenerator):
+    """Generates data by adding NSynth notes together to make chords."""
+    
+    def __init__(self, 
+            frame_length, max_polyphony,
+            randomize_train_frame_offsets=False,
+            batch_size=32, 
+            num_samples=10**5,
+            augmenter=None,
+            sample_rate=16000,
+            min_midi=25, max_midi=84,
+            label_format='categorical',
+        ):
+        self.label_format = label_format
+        if label_format is None:
+            label_format = 'midi_array'
+        tracks = MusicDataLoader(sample_rate, frame_length, 
+            datasets=['nsynth_keyboard_train'],
+            batch_by_track=False, val_split=0.0
+        ).load()
+        self.track_sampler = NSynthChordSampler(
+            tracks, frame_length, batch_size, 
+            label_format, min_midi, max_midi, max_polyphony,
+            randomize_train_frame_offsets=randomize_train_frame_offsets, 
+            batch_by_track=batch_by_track)
+        self._data_dict = collections.defaultdict(list)
+        for track in tracks:
+            instrument_str, midi, velocity = track.name.split('-')
+            midi, velocity = int(midi), int(velocity)
+            self._data_dict[midi].append(track.waveform)
+        self._data_dict = { m: np.vstack(w) for m, w in self._data_dict.items() }
+        self.sample_rate = sample_rate
+        self.batch_size = batch_size
+        self.on_epoch_end()
+        
+        self.augmenter = augmenter
+        if self.augmenter is not None:
+            print('AudioDataGenerator using data augmentation')
+
+
+    def _get_track(self, i: int, get_info: bool) -> Tuple:
+        """Gets track `i`. Can be overridden by subclasses."""
+        # TODO(jxm): implement
+        # return self.track_sampler.__getitem__(i, get_info=get_info)
+        raise NotImplementedError()
+
+    def __len__(self):
+        """Denotes the number of batches per epoch."""
+        return self.num_batches
+        
+    @property
+    def _midi_span(self):
+        """ The number of MIDI notes to sample from. """
+        return (self.max_midi - self.min_midi + 1)
+    
+    def get_chord_waveform(self, chord_midi_vals):
+        # get waveforms and add them together
+        chord = self.get_random_chord()
+        waveforms = [random.choice(self._data_dict[m]) for m in chord_midi_vals if m > 0]
+        waveforms = np.array(waveforms)
+        i1 = np.random.choice(self._waveform_length)
+        i2 = i1 + self.frame_length
+        waveforms = waveforms[:, i1 : i2]
+        chord_waveform = waveforms.sum(axis=0)
+        # pad with zeros to meet frame_length
+        if len(chord_waveform) < self.frame_length:
+            num_zeros = self.frame_length - len(chord_waveform)
+            left_padding = np.random.choice(num_zeros)
+            right_padding = num_zeros - left_padding
+            chord_waveform = np.pad(chord_waveform, (left_padding, right_padding),
+                'constant', constant_values=(0,0))
+        return chord_waveform
+    
+    def __getitem__(self, i):
+        raise NotImplementedError('NSynthChordGenerator has no __getitem__. Use __next__ instead.')
+
+    def __next__(self):
+        """ Returns the batch at index <i>. """
+        # Choose a note to get chords for at each index
+        batch_midi_idxs = np.random.choice(self._midi_span, size=self.batch_size, p=self._midi_probs)
+        midis = self._midis[batch_midi_idxs]
+        
+        # Get chord MIDIs and make categorical vector
+        # TODO is apply_along_axis the right way to map a function over a 1D np array..?
+        chord_midis = get_chord_from_midi_v(midis)
+        if self.label_format == 'categorical':
+            y = np.apply_along_axis(lambda _m: utils.midi_vals_to_categorical(_m, self.min_midi, self.max_midi), 1, chord_midis)
+        elif self.label_format == 'midi_array':
+            y = np.apply_along_axis(lambda _m: utils.midi_vals_to_midi_array(_m, self.min_midi, self.max_midi), 1, chord_midis)
+        else:
+            raise ValueError(f'unsupported label format {self.label_format}')
+        
+        # Create chords from MIDIs
+        x = np.apply_along_axis(self.get_chord_waveform, 1, chord_midis)
+        
+        # If batching by track, 'unroll'
+        if self.batch_by_track:
+            x = np.squeeze(x)
+            y = np.repeat(y[:, np.newaxis], len(x), 1)
+            y = np.squeeze(y)
+        return x, y
+        
+
+    def on_epoch_end(self):
+        """ Re-shuffle examples after each epoch. """
+        self._idxs = np.arange(len(self.x))
+        if self.shuffle == True:
+            np.random.shuffle(self._idxs)
 
 if __name__ == '__main__':
     import random

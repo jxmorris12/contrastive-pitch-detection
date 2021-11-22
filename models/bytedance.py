@@ -113,10 +113,10 @@ class AcousticModelCRnn8Dropout(nn.Module):
     def __init__(self, classes_num, momentum, tiny=False):
         super(AcousticModelCRnn8Dropout, self).__init__()
 
-        channel_factor = 2 if tiny else 8
-        midfeat = 448 if tiny else 1792
-        gru_size_1 = 128 if tiny else 768
-        gru_size_2 = 64 if tiny else 256
+        channel_factor = 4 if tiny else 8
+        midfeat = 448*2 if tiny else 1792
+        gru_size_1 = 256 if tiny else 768
+        gru_size_2 = 128 if tiny else 256
 
         channels = [6*channel_factor, 8*channel_factor, 12*channel_factor, 16*channel_factor]
         if not tiny:

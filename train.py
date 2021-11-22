@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 num_cpus = len(os.sched_getaffinity(0)) # ask the OS how many cpus we have (stackoverflow.com/questions/1006289)
 
+WANDB_ENABLED = wandb.setup().settings.mode != "disabled"
+
 def set_random_seed(r):
     random.seed(r)
     np.random.seed(r)
@@ -201,13 +203,15 @@ def main():
     callbacks = []
     # TODO(jxm): reinstate this callback with a piano piece
     # callbacks.append(LogRecordingSpectrogramCallback(args))
-    callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps))
-    if args.contrastive:
-        callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
+    if WANDB_ENABLED:
+        # only compute this stuff if w&b is not disabled
+        callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps))
+        if args.contrastive:
+            callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.epochs} epochs) = {steps_per_epoch * args.epochs} ')
     total_num_steps = steps_per_epoch * args.epochs
-    log_interval = int(steps_per_epoch / 5.0) # TODO(jxm): argparse for logs_per_epoch?
+    log_interval = int(steps_per_epoch / 10.0) # TODO(jxm): argparse for logs_per_epoch?
     pbar = tqdm.trange(total_num_steps)
     for step in pbar:
         # Pre-epoch callbacks.

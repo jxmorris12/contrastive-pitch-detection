@@ -271,16 +271,16 @@ def midi_to_hz(d):
     exp = (d - 69) / 12.0
     return (2 ** exp) * 440.0
 
-from .nsynth_chords import *
+from .nsynth import load_nsynth
+from .nsynth_chords import load_nsynth_chords
 dataset_load_funcs = { 
-    # 'guitarset': load_guitarset, 
-    # 'idmt': load_idmt,
-    # 'idmt_tiny': load_idmt_tiny,
-    # 'nsynth': load_nsynth,
-    # 'nsynth_full': load_nsynth_full,
-    # 'nsynth_acoustic_guitar': load_nsynth_acoustic_guitar
-    # 'nsynth_piano': load_nsynth_piano,
+    #
+    'nsynth_keyboard_train': functools.partial(load_nsynth, 'train', 'keyboard'),
+    'nsynth_keyboard_valid': functools.partial(load_nsynth, 'valid', 'keyboard'),
+    'nsynth_keyboard_test': functools.partial(load_nsynth, 'test', 'keyboard'),
+    #
     'nsynth_chords_train': functools.partial(load_nsynth_chords, 'train'),
     'nsynth_chords_valid': functools.partial(load_nsynth_chords, 'valid'),
     'nsynth_chords_test':  functools.partial(load_nsynth_chords, 'test'),
+    #
 }

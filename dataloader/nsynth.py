@@ -1,10 +1,27 @@
-# tfds.audio.Nsynth
+import collections
+from typing import List
 
-def load_nsynth(use_guitar=True, use_bass=False, use_keyboard=False, use_acoustic_guitar=False, use_full_dataset=False, perc=None):
-    # TODO use multiprocessing for this and other data loaders.
-    # TODO or load nsynth from tensorflow_datasets?
-    json_files = [f'/p/qdata/jm8wx/other/audio/data/NSynth/nsynth-{folder}/examples.json' for folder in ('train', 'test')]
-    # Bad samples
+import librosa
+import os
+import pathlib
+import pickle
+import tqdm
+
+from .utils import midi_to_hz, AnnotatedAudioChunk, Track
+
+# TODO(jxm): Add trim_silence as a global preprocessing option.
+trim_silence = False
+# TODO(jxm): look up instrument numbers to enable other options
+INSTRUMENT_FAMILY_NUMS = { 'keyboard': 4 }
+def _load_nsynth(split, instrument) -> List[Track]:
+    import tensorflow_datasets as tfds
+
+    assert split in {'train', 'test', 'valid'}
+    SAMPLE_RATE = 16_000 # this is constant for NSynth
+
+    print(f'Loading NSynth split {split} and instrument {instrument}')
+   
+    # Bad samples (that I know about so far...)
     bad_nsynth_insts = {
         'guitar_acoustic_023',
         'guitar_acoustic_025',
@@ -12,85 +29,81 @@ def load_nsynth(use_guitar=True, use_bass=False, use_keyboard=False, use_acousti
         'guitar_acoustic_036',
     }
     
+    nsynth = tfds.audio.Nsynth()
+    ds = nsynth.as_dataset()[split]
+    if instrument:
+        ds = ds.filter(
+            lambda r: r['instrument']['family'] == INSTRUMENT_FAMILY_NUMS[instrument]
+        )
     tracks = []
     total_length = 0
     file_prefixes = collections.Counter()
-    for file in json_files:
-        data = json.loads(open(file).read())
-        folder = os.path.join(os.path.dirname(file))
-        for key in data.keys():
-            prefix = key[:key.find('_')]
-            file_prefixes[prefix] += 1
-        # data types: {'mallet', 'reed', 'string', 'brass', 'guitar', 'bass', 'vocal', 'flute', 'synth', 'organ', 'keyboard'}
-        sample_names = [sample_name for sample_name in sorted(data.keys()) 
-            if (('guitar_acoustic' in sample_name) and use_acoustic_guitar)
-            or (('guitar' in sample_name) and (use_guitar or use_full_dataset)) 
-            or (('bass' in sample_name) and (use_bass or use_full_dataset))
-            or (('keyboard' in sample_name) and (use_keyboard))
-            or (('string' in sample_name or 'synth' in sample_name or 'keyboard' in sample_name) and use_full_dataset)
-        ]
-        if perc:
-            assert 0 < perc <= 1, "percentage of NSynth to use must be on (0, 1]"
-            sample_names = sample_names[:int(perc * len(sample_names))]
-        for sample_name in tqdm.tqdm(sample_names, desc=f'Loading NSynth data from {file}'):
-            if sample_name in bad_nsynth_insts:
-                print(f'Skipping bad sample {sample_name}')
-                continue
-            wav_file = os.path.join(folder, 'audio', f'{sample_name}.wav')
-            raw_waveform, sample_rate = torchaudio.load(wav_file)
-            raw_waveform = raw_waveform.flatten()
-            # Trim leading and trailing silence.
-            if use_acoustic_guitar:
-                raw_waveform, trimmed_region = librosa.effects.trim(raw_waveform, top_db=20)
-            # TODO Fake string and fret number?
-            sample_json = data[sample_name]
-            midi = sample_json['pitch']
-            # sample_json: {
-            #   'qualities': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-            #   'pitch': 66, 'note': 72288, 
-            #   'instrument_source_str': 'acoustic', 
-            #   'velocity': 100, 'instrument_str': 'guitar_acoustic_010', 
-            #   'instrument': 219, 'sample_rate': 16000, 
-            #   'qualities_str': [], 'instrument_source': 0, 
-            #   'note_str': 'guitar_acoustic_010-066-100', 
-            #   'instrument_family': 3, 
-            #   'instrument_family_str': 'guitar'
-            #   }
-            pitch = midi_to_hz(midi)
-            new_sample = AnnotatedAudioChunk(
-                0, len(raw_waveform), 
-                sample_rate, 
-                [pitch], [0], [1]
-            )
-            total_length += new_sample.length_in_seconds
-            track = Track('nsynth', sample_name, [new_sample], raw_waveform, sample_rate, name=sample_name)
-            tracks.append(track)
-    print(f'NSynth file counts by prefix: {file_prefixes}')
-    print(f'NSynth loaded {total_length:.2f}s of audio ({len(tracks)} tracks)')
+    total_count = 0
+    for data in tqdm.tqdm(iter(ds), desc=f'Loading NSynth split {split}'):
+        sample_name = str(data['id'])
+        if sample_name in bad_nsynth_insts:
+            print(f'Skipping bad sample {sample_name}')
+            continue
+        total_count += 1
+        raw_waveform = data['audio'].numpy()
+        # Trim leading and trailing silence.
+        if trim_silence:
+            raw_waveform, trimmed_region = librosa.effects.trim(raw_waveform, top_db=20)
+        # TODO Fake string and fret number?
+        midi = data['pitch'].numpy()
+        # 
+        # 
+        # data sample: 
+        # {
+        # 'audio': <tf.Tensor: shape=(64000,), dtype=float32, numpy=array([0., 0., 0., ..., 0., 0., 0.], dtype=float32)>, 
+        # 'id': <tf.Tensor: shape=(), dtype=string, numpy=b'keyboard_electronic_054-106-100'>,
+        # 'instrument': {'family': <tf.Tensor: shape=(), dtype=int64, numpy=4>,
+        # 'label': <tf.Tensor: shape=(), dtype=int64, numpy=480>,
+        # 'source': <tf.Tensor: shape=(), dtype=int64, numpy=1>},
+        # 'pitch': <tf.Tensor: shape=(), dtype=int64, numpy=106>,
+        # 'qualities': {
+            # 'bright': <tf.Tensor: shape=(), dtype=bool, numpy=True>,
+            # 'dark': <tf.Tensor: shape=(), dtype=bool, numpy=False>,
+            # 'distortion': <tf.Tensor: shape=(), dtype=bool, numpy=False>,
+            # 'fast_decay': <tf.Tensor: shape=(), dtype=bool, numpy=False>, 
+            # 'long_release': <tf.Tensor: shape=(), dtype=bool, numpy=False>,
+            # 'multiphonic': <tf.Tensor: shape=(), dtype=bool, numpy=False>, 
+            # 'nonlinear_env': <tf.Tensor: shape=(), dtype=bool, numpy=False>,
+            # 'percussive': <tf.Tensor: shape=(), dtype=bool, numpy=False>,
+            # 'reverb': <tf.Tensor: shape=(), dtype=bool, numpy=False>,
+            # 'tempo-synced': <tf.Tensor: shape=(), dtype=bool, numpy=False>
+        # }, 
+        # 'velocity': <tf.Tensor: shape=(), dtype=int64, numpy=100>
+        # }
+        # 
+        # 
+        freq = midi_to_hz(midi)
+        new_sample = AnnotatedAudioChunk(
+            0, len(raw_waveform), 
+            SAMPLE_RATE, 
+            [freq], [0], [1]
+        )
+        total_length += new_sample.length_in_seconds
+        track = Track('nsynth', sample_name, [new_sample], raw_waveform, SAMPLE_RATE, name=sample_name)
+        tracks.append(track)
+    print(f'NSynth ({split},{instrument}) total number of samples: {total_count}')
+    print(f'NSynth ({split},{instrument}) loaded {total_length:.2f}s of audio ({len(tracks)} tracks)')
     return tracks
 
-def load_nsynth_full():
-    return load_nsynth(use_full_dataset=True)
-
-def load_nsynth_keyboard():
-    return load_nsynth(use_keyboard=True)
-
-def load_nsynth_acoustic_guitar():
-    return load_nsynth(use_guitar=False, use_bass=False, use_acoustic_guitar=True, use_full_dataset=False)
-
-dataset_load_funcs = { 
-    'guitarset': load_guitarset, 
-    'idmt': load_idmt,
-    'idmt_tiny': load_idmt_tiny,
-    'nsynth': load_nsynth,
-    'nsynth_full': load_nsynth_full,
-    'nsynth_acoustic_guitar': load_nsynth_acoustic_guitar
-    'nsynth_keyboard': load_nsynth_keyboard,
-}
-
-
-if __name__ == '__main__':
-    # print('debug run - loading guitarset for profiling')
-    # load_guitarset()
-    print('debug run - loading NSynth acoustic guitar')
-    load_nsynth_acoustic_guitar()
+def load_nsynth(*args):
+    folder = pathlib.Path(__file__).resolve().parent
+    params_key = '_'.join(str(p) for p in args)
+    cached_file = os.path.join(folder, '.nsynth_cache', params_key + '.p')
+    # make cache if it doesn't exist
+    (
+        pathlib.Path(os.path.join(folder, '.nsynth_cache'))
+        .mkdir(parents=True, exist_ok=True)
+    )
+    # Get data and save to cache
+    if os.path.exists(cached_file):
+        return pickle.load(open(cached_file, 'rb'))
+    else:
+        data = _load_nsynth(*args)
+        pickle.dump(data, open(cached_file, 'wb'))
+        print('Wrote NSynth data to', cached_file)
+        return data

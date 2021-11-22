@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Tuple
 
 import abc
 import collections
@@ -11,6 +11,7 @@ import seaborn as sns
 import sklearn
 import sklearn.manifold
 import torch
+from torchlibrosa.stft import Spectrogram, LogmelFilterBank
 import tqdm
 import wandb
 
@@ -67,19 +68,45 @@ class LogRecordingSpectrogramCallback(Callback):
         file and log to TensorBoard.
         """
         self._log_spectrogram(epoch, step)
-        
+
+def get_spectrogram_and_logmel_extractor(frames_per_second=100) -> Tuple[Spectrogram, LogmelFilterBank]:  
+    sample_rate = 16000
+    window_size = 2048
+    hop_size = sample_rate // frames_per_second
+    mel_bins = 229
+    fmin = 30
+    fmax = sample_rate // 2
+
+    window = 'hann'
+    center = True
+    pad_mode = 'reflect'
+    ref = 1.0
+    amin = 1e-10
+    top_db = None      
+
+    spectrogram_extractor = Spectrogram(n_fft=window_size, 
+            hop_length=hop_size, win_length=window_size, window=window, 
+            center=center, pad_mode=pad_mode, freeze_parameters=True)
+    logmel_extractor = LogmelFilterBank(sr=sample_rate, 
+        n_fft=window_size, n_mels=mel_bins, fmin=fmin, fmax=fmax, ref=ref, 
+        amin=amin, top_db=top_db, freeze_parameters=True)
+    return spectrogram_extractor, logmel_extractor
 
 class VisualizePredictionsCallback(Callback):  
     """ Gets predictions from model using data from ``val_generator``, using
     ``num_val_batches`` of data. Runs every ``every_n_epochs`` epochs. Logs
     some instance-level and aggregated predictions to Weights & Biases.
     """
-    def __init__(self, args, model, val_generator, num_validation_steps, every_n_epochs=3, num_validation_points=3*4):
+    spectrogram_extractor: Spectrogram
+    logmel_extractor: LogmelFilterBank
+    def __init__(self, args, model, val_generator, num_validation_steps, every_n_epochs=1, num_validation_points=32):
         self.args = args
         self.model = model
         self.val_generator = val_generator
         self.num_validation_steps = num_validation_steps
         self.every_n_epochs = every_n_epochs
+        # Spectrogram and log-mel extractors (these are copied from bytedance piano transcription model input)
+        self.spectrogram_extractor, self.logmel_extractor = get_spectrogram_and_logmel_extractor()
         # Find number of batches necessary for 1024 validation predictions
         self.num_validation_points = num_validation_points
         self.num_val_batches = min(num_validation_steps, math.ceil( num_validation_points / args.batch_size))
@@ -123,7 +150,7 @@ class VisualizePredictionsCallback(Callback):
     def _log_instance_level_metrics(self, epoch, step, x, y_true, y_pred, frame_info, max_instance_level_plots=128):
         table_columns = [
             'dataset', 'track', 'start_time', 'end_time', 
-            'waveform', 'preds', 'pred_labels', 'true_labels', 
+            'waveform', 'spectrogram', 'logmel', 'preds', 'pred_labels', 'true_labels', 
             'pred_type']
         table = wandb.Table(table_columns)
         pred_types = {}
@@ -137,6 +164,8 @@ class VisualizePredictionsCallback(Callback):
             ]: pred_types[pred_type] = 0
         # Print instance-level add metrics (like precision and accuracy)
         n = 0
+        spectrograms = self.spectrogram_extractor(torch.tensor(x))
+        logmels = self.logmel_extractor(spectrograms)
         for waveform, true_labels, preds, frame_info in tqdm.tqdm(
                 zip(x, y_true, y_pred, frame_info), 
                 desc='VisualizePredictionsCallback plotting and logging instance-level metrics',
@@ -151,6 +180,8 @@ class VisualizePredictionsCallback(Callback):
             ]
             # row.append(self._plot_waveform(waveform))
             row.append(wandb.Audio(waveform, sample_rate=self.args.sample_rate))
+            row.append(wandb.Image(spectrograms[n-1].numpy().squeeze()))
+            row.append(wandb.Image(logmels[n-1].numpy().squeeze()))
             row.append(self._plot_preds(preds))
             pred_midis = self.args.min_midi + preds.round().nonzero()[0]
             row.append(str(pred_midis))

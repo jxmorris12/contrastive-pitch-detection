@@ -1,5 +1,6 @@
 __pycache__/
 
+dataloader/.nsynth_cache/
 models/assets/
 outputs/
 wandb/
