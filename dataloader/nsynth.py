@@ -40,7 +40,7 @@ def _load_nsynth(split, instrument) -> List[Track]:
     file_prefixes = collections.Counter()
     total_count = 0
     for data in tqdm.tqdm(iter(ds), desc=f'Loading NSynth split {split}'):
-        sample_name = str(data['id'])
+        sample_name = data['id'].numpy().decode()
         if sample_name in bad_nsynth_insts:
             print(f'Skipping bad sample {sample_name}')
             continue
