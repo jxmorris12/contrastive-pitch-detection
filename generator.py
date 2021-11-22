@@ -1,12 +1,14 @@
-import collections
 from typing import List, Tuple
+
+import collections
+import pickle
 import random
 
 import numpy as np
 import torch
 
 from dataloader import MusicDataLoader
-from dataloader.utils import Track
+from dataloader.utils import AnnotatedAudioChunk, Track, midi_to_hz
 from utils import TrackFrameSampler
 
 np.seterr(divide='ignore', invalid='ignore')
@@ -41,7 +43,10 @@ class AudioDataGenerator(torch.utils.data.Dataset):
             label_format = 'midi_array'
         if num_fake_nsynth_chords:
             print(f'Replacing {len(tracks)} tracks with {num_fake_nsynth_chords} fake NSynth chords')
-            tracks = NSynthChordFakeTrackList(sample_rate, frame_length, num_fake_nsynth_chords)
+            tracks = NSynthChordFakeTrackList(
+                num_fake_nsynth_chords, batch_size, sample_rate, frame_length,
+                min_midi=min_midi, max_midi=max_midi
+            )
         self.track_sampler = TrackFrameSampler(tracks, frame_length, batch_size, 
             label_format, min_midi, max_midi, max_polyphony,
             randomize_train_frame_offsets=randomize_train_frame_offsets, 
@@ -94,20 +99,37 @@ class AudioDataGenerator(torch.utils.data.Dataset):
 class NSynthChordFakeTrackList:
     """Generates data by adding NSynth notes together to make chords."""
     
-    def __init__(self, sample_rate, frame_length, num_chord_batches: int):
+    def __init__(self, num_chord_batches: int, batch_size: int,
+            sample_rate: int, frame_length: int,
+            min_midi: int, max_midi: int,
+            random_chords=False # Either random chords or top-K chords (calculated from MAESTRO dataset)
+        ):
         self.num_chord_batches = num_chord_batches
-        self.notes_by_midi = collections.defaultdict(list)
+        self.batch_size = batch_size
+        self.min_midi = min_midi
+        self.max_midi = max_midi
         tracks = MusicDataLoader(sample_rate, frame_length, 
-            # datasets=['nsynth_keyboard_train'],
-            datasets=['nsynth_keyboard_valid'],
+            datasets=['nsynth_keyboard_train'],
+            # datasets=['nsynth_keyboard_valid'],
             batch_by_track=False, val_split=0.0
         ).load()
+        self.notes_by_midi = collections.defaultdict(list)
         for idx in range(len(tracks)):
             track = tracks[idx]
             instrument_str, midi, velocity = track.name.split('-')
             midi, velocity = int(midi), int(velocity)
-            self.notes_by_midi[midi].append(track.waveform)
-        self.notes_by_midi = { m: np.vstack(w) for m, w in self.notes_by_midi.items() }
+            self.notes_by_midi[midi].append(track)
+        self._midis = np.array([m for m in self.notes_by_midi.keys() if self.min_midi <= m <= self.max_midi])
+        self._midis = np.sort(self._midis)
+        self._midi_probs = np.array([len(self.notes_by_midi[m]) for m in self._midis])
+        self._midi_probs = self._midi_probs.astype(float)
+        self._midi_probs /= self._midi_probs.sum() # Normalize probabilities
+        
+        self.random_chords = random_chords
+        if not self.random_chords:
+            chords_by_num_notes = pickle.load(open('assets/maestrov3_chords_raw.p', 'rb'))
+            self.top_chords = list(map(eval, chords_by_num_notes.keys()))
+            print(f'NSynthChordFakeTrackList using top {len(self.top_chords)} chords')
 
     def __len__(self) -> int:
         """Denotes the number of batches per epoch."""
@@ -117,74 +139,32 @@ class NSynthChordFakeTrackList:
     def _midi_span(self):
         """ The number of MIDI notes to sample from. """
         return (self.max_midi - self.min_midi + 1)
-    
-    def get_chord_waveform(self, chord_midi_vals):
-        # get waveforms and add them together
-        # TODO add feature to get most popular chord from a file
-        waveforms = [random.choice(self.notes_by_midi[m]) for m in chord_midi_vals if m > 0]
-        waveforms = np.array(waveforms)
-        i1 = np.random.choice(self._waveform_length)
-        i2 = i1 + self.frame_length
-        waveforms = waveforms[:, i1 : i2]
-        chord_waveform = waveforms.sum(axis=0)
-        # pad with zeros to meet frame_length
-        if len(chord_waveform) < self.frame_length:
-            num_zeros = self.frame_length - len(chord_waveform)
-            left_padding = np.random.choice(num_zeros)
-            right_padding = num_zeros - left_padding
-            chord_waveform = np.pad(chord_waveform, (left_padding, right_padding),
-                'constant', constant_values=(0,0))
-        return chord_waveform
 
-    def _get_track(self):
+    def __getitem__(self, i) -> Track:
         """ Returns the batch at index <i>. """
         # Choose a note to get chords for at each index
-        batch_midi_idxs = np.random.choice(self._midi_span, size=self.batch_size, p=self._midi_probs)
-        midis = self._midis[batch_midi_idxs]
-        
-        # Get chord MIDIs and make categorical vector
-        # TODO is apply_along_axis the right way to map a function over a 1D np array..?
-        chord_midis = get_chord_from_midi_v(midis)
-        if self.label_format == 'categorical':
-            y = np.apply_along_axis(lambda _m: utils.midi_vals_to_categorical(_m, self.min_midi, self.max_midi), 1, chord_midis)
-        elif self.label_format == 'midi_array':
-            y = np.apply_along_axis(lambda _m: utils.midi_vals_to_midi_array(_m, self.min_midi, self.max_midi), 1, chord_midis)
+        # TODO add feature to get most popular chord from a file
+        if self.random_chords:
+            batch_midi_idxs = np.random.choice(self._midi_span, size=self.batch_size, p=self._midi_probs)
+            midis = [m for m in self._midis[batch_midi_idxs] if m > 0]
         else:
-            raise ValueError(f'unsupported label format {self.label_format}')
-        
-        # Create chords from MIDIs
-        x = np.apply_along_axis(self.get_chord_waveform, 1, chord_midis)
-        
-        # If batching by track, 'unroll'
-        if self.batch_by_track:
-            x = np.squeeze(x)
-            y = np.repeat(y[:, np.newaxis], len(x), 1)
-            y = np.squeeze(y)
-        return x, y
+            midis = random.choice(self.top_chords)
+        tracks = [random.choice(self.notes_by_midi[m]) for m in midis]
+        waveform = np.vstack([t.waveform for t in tracks]).sum(0) # sum along batch dimension
+
+        chord_audio_chunk = AnnotatedAudioChunk(
+            0, len(waveform), 
+            tracks[0].sample_rate, 
+            midis, [0], [1]
+        )
+        chord_track_name = '--'.join((t.name for t in tracks))
+        return Track(
+            'nsynth', chord_track_name,
+            [chord_audio_chunk], waveform,
+            tracks[0].sample_rate, 
+            name=chord_track_name
+        )
 
     def on_epoch_end(self):
         # Nothing to do here
         pass
-
-if __name__ == '__main__':
-    import random
-    from dataloader import MusicDataLoader
-    
-    sr = 8000   # sample rate
-    n = 512     # sample length
-    
-    data_loader = MusicDataLoader(sr, n, 
-        min_midi=25, max_midi=85,
-        label_format="categorical",
-        datasets=['idmt_tiny'],
-        normalize_audio=True,
-        batch_by_track=True,
-    )
-    x, y = data_loader.load()
-    gen = AudioDataGenerator(x, y, batch_by_track=True, sample_rate=sr,
-        augmenter=None,
-    )
-    idx = random.choice(range(len(gen)))
-    x, y = gen[idx]
-    # breakpoint()
-    print('x.shape:', x.shape, 'y.shape:', y.shape)

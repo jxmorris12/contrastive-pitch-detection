@@ -41,6 +41,8 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=5e-4, help='Learning rate for adam optimizer')
     parser.add_argument('--sample_rate', type=int, default=16_000, help='audio will be resampled to this sample rate before being passed to the model (measured in Hz)')
     parser.add_argument('--frame_length', '--frame_length', type=int, default=1024, help='length of audio samples (in number of datapoints)')
+    parser.add_argument('--num_fake_nsynth_chords', type=int, default=0,
+        help='number of fake NSynth chord tracks to include. Will over-write train set!')
     parser.add_argument('--model', type=str, default='bytedance_tiny', help='model to use for training', choices=('crepe_tiny', 'crepe_full', 'bytedance', 'bytedance_tiny'))
 
     parser.add_argument('--randomize_val_and_training_data', '--rvatd', default=False,
@@ -114,11 +116,15 @@ def main():
     
     #
     # load data
-    train_data_loader = MusicDataLoader(sample_rate, frame_length, 
-        datasets=['nsynth_chords_train'],
-        batch_by_track=False, val_split=0.0
-    )
-    train_tracks = train_data_loader.load()
+    if args.num_fake_nsynth_chords == 0:
+        train_data_loader = MusicDataLoader(sample_rate, frame_length, 
+            datasets=['nsynth_chords_train'],
+            batch_by_track=False, val_split=0.0
+        )
+        train_tracks = train_data_loader.load()
+    else:
+        # Don't load train tracks if we're randomly generating!
+        train_tracks = []
 
     val_data_loader = MusicDataLoader(sample_rate, frame_length, 
         datasets=['nsynth_chords_valid', 'nsynth_chords_test'],
@@ -148,6 +154,7 @@ def main():
         min_midi=args.min_midi, max_midi=args.max_midi,
         sample_rate=args.sample_rate,
         batch_by_track=False,
+        num_fake_nsynth_chords=args.num_fake_nsynth_chords,
     )
     val_generator = AudioDataGenerator(
         val_tracks, args.frame_length,

@@ -32,7 +32,7 @@ def load_nsynth_chords(split='train', tiny=False):
         )
 
         sample_name = str(item['instrument_id']) + '_' + str(item['velocity']) + '_' + str(item['notes'])
-        data.append(Track('nsynth', sample_name, [new_sample], raw_waveform, SAMPLE_RATE, name=sample_name))
+        data.append(Track('nsynth_chords', sample_name, [new_sample], raw_waveform, SAMPLE_RATE, name=sample_name))
 
     if tiny: 
         data = random.sample(data, int(len(data) * 0.025))

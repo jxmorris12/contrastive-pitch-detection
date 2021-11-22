@@ -102,7 +102,8 @@ class TrackFrameSampler:
             to ``self.max_polyphony``.
         """
         self.track_frame_index_pairs = []
-        for track_idx, track in enumerate(self.tracks):
+        for track_idx in range(len(self.tracks)):
+            track = self.tracks[track_idx]
             for frame_idx in range(track.num_frames(self.frame_length)):
                 frequencies = track.get_frequencies_from_offset(frame_idx * self.frame_length, (frame_idx + 1) * self.frame_length)
                 if not len(frequencies) and self.skip_empty_samples:
