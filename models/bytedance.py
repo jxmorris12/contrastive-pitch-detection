@@ -110,21 +110,31 @@ class ConvBlock(nn.Module):
 
 
 class AcousticModelCRnn8Dropout(nn.Module):
-    def __init__(self, classes_num, midfeat, momentum):
+    def __init__(self, classes_num, momentum, tiny=False):
         super(AcousticModelCRnn8Dropout, self).__init__()
 
-        self.conv_block1 = ConvBlock(in_channels=1, out_channels=48, momentum=momentum)
-        self.conv_block2 = ConvBlock(in_channels=48, out_channels=64, momentum=momentum)
-        self.conv_block3 = ConvBlock(in_channels=64, out_channels=96, momentum=momentum)
-        self.conv_block4 = ConvBlock(in_channels=96, out_channels=128, momentum=momentum)
+        channel_factor = 2 if tiny else 8
+        midfeat = 448 if tiny else 1792
+        gru_size_1 = 128 if tiny else 768
+        gru_size_2 = 64 if tiny else 256
 
-        self.fc5 = nn.Linear(midfeat, 768, bias=False)
-        self.bn5 = nn.BatchNorm1d(768, momentum=momentum)
+        channels = [6*channel_factor, 8*channel_factor, 12*channel_factor, 16*channel_factor]
+        if not tiny:
+            # temporary assert: just checking my math
+            assert channels == [48, 64, 96, 128]
 
-        self.gru = nn.GRU(input_size=768, hidden_size=256, num_layers=2, 
+        self.conv_block1 = ConvBlock(in_channels=1, out_channels=channels[0], momentum=momentum)
+        self.conv_block2 = ConvBlock(in_channels=channels[0], out_channels=channels[1], momentum=momentum)
+        self.conv_block3 = ConvBlock(in_channels=channels[1], out_channels=channels[2], momentum=momentum)
+        self.conv_block4 = ConvBlock(in_channels=channels[2], out_channels=channels[3], momentum=momentum)
+
+        self.fc5 = nn.Linear(midfeat, gru_size_1, bias=False)
+        self.bn5 = nn.BatchNorm1d(gru_size_1, momentum=momentum)
+
+        self.gru = nn.GRU(input_size=gru_size_1, hidden_size=gru_size_2, num_layers=2, 
             bias=True, batch_first=True, dropout=0., bidirectional=True)
 
-        self.fc = nn.Linear(512, classes_num, bias=True)
+        self.fc = nn.Linear(gru_size_2*2, classes_num, bias=True)
         
         self.init_weight()
 
@@ -158,12 +168,14 @@ class AcousticModelCRnn8Dropout(nn.Module):
         
         (x, _) = self.gru(x)
         x = F.dropout(x, p=0.5, training=self.training, inplace=False)
-        output = torch.sigmoid(self.fc(x))
+        output = self.fc(x)
         return output
 
 class Bytedance_Regress_pedal_Notes(nn.Module):
-    def __init__(self, classes_num, out_activation, frames_per_second=100):
+    def __init__(self, classes_num, out_activation, frames_per_second=100, tiny=False):
         super().__init__()
+
+        momentum = 0.01
 
         sample_rate = 16000
         window_size = 2048
@@ -179,9 +191,6 @@ class Bytedance_Regress_pedal_Notes(nn.Module):
         amin = 1e-10
         top_db = None
 
-        midfeat = 1792
-        momentum = 0.01
-
         # Spectrogram extractor
         self.spectrogram_extractor = Spectrogram(n_fft=window_size, 
             hop_length=hop_size, win_length=window_size, window=window, 
@@ -194,7 +203,8 @@ class Bytedance_Regress_pedal_Notes(nn.Module):
 
         self.bn0 = nn.BatchNorm2d(mel_bins, momentum)
 
-        self.notes_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
+        self.notes_model = AcousticModelCRnn8Dropout(
+            classes_num, momentum, tiny=tiny)
         
         self.init_weight()
 

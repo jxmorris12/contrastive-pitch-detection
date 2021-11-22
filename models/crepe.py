@@ -138,7 +138,7 @@ class CREPE(torch.nn.Module):
         x = self.embed(x)
         x = x.permute(0, 2, 1, 3)
         x = x.reshape(batch_size, num_frames, -1)
-        # TODO(jxm): Could add a GRU layer for longer frames. Averaging is pretty dumb.
+        # TODO(jxm): Could add a GRU layer for longer frames? Averaging feels dumb.
         x = x.mean(1)
 
         # Compute logits

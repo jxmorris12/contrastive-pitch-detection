@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=5e-4, help='Learning rate for adam optimizer')
     parser.add_argument('--sample_rate', type=int, default=16_000, help='audio will be resampled to this sample rate before being passed to the model (measured in Hz)')
     parser.add_argument('--frame_length', '--frame_length', type=int, default=1024, help='length of audio samples (in number of datapoints)')
-    parser.add_argument('--model', type=str, default='crepe', help='model to use for training', choices=('crepe', 'bytedance'))
+    parser.add_argument('--model', type=str, default='bytedance_tiny', help='model to use for training', choices=('crepe_tiny', 'crepe_full', 'bytedance', 'bytedance_tiny'))
 
     parser.add_argument('--randomize_val_and_training_data', '--rvatd', default=False,
         action='store_true', help='shuffle validation and training data')
@@ -69,11 +69,22 @@ def get_model(args):
     out_activation = 'softmax' if args.max_polyphony == 1 else 'sigmoid'
     if args.model == 'bytedance':
         model = Bytedance_Regress_pedal_Notes(
-            num_output_nodes, out_activation
+            num_output_nodes, out_activation, tiny=False
         )
-    elif args.model == 'crepe':
+    elif args.model == 'bytedance_tiny':
+        model = Bytedance_Regress_pedal_Notes(
+            num_output_nodes, out_activation, tiny=True
+        )
+    elif args.model == 'crepe_tiny':
         model = CREPE(
             model='tiny',
+            num_output_nodes=num_output_nodes,
+            load_pretrained=False,
+            out_activation=out_activation
+        )
+    elif args.model == 'crepe_full':
+        model = CREPE(
+            model='full',
             num_output_nodes=num_output_nodes,
             load_pretrained=False,
             out_activation=out_activation
@@ -190,7 +201,7 @@ def main():
     callbacks = []
     # TODO(jxm): reinstate this callback with a piano piece
     # callbacks.append(LogRecordingSpectrogramCallback(args))
-    # callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps))
+    callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps))
     if args.contrastive:
         callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     

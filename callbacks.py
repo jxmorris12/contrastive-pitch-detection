@@ -110,7 +110,7 @@ class VisualizePredictionsCallback(Callback):
         plt.close()
         return wandb_fig
     
-    def _plot_pred_types(self, step: int, pred_types: Dict[str, int]):
+    def _plot_pred_types(self, epoch: int, step: int, pred_types: Dict[str, int]):
         """ Plots a bar graph of prediction types """
         data = [[pred_type, count] for (pred_type, count) in pred_types.items()]
         table = wandb.Table(data=data, columns = ["prediction_type", "count"])
@@ -162,16 +162,24 @@ class VisualizePredictionsCallback(Callback):
             table.add_data(*row)
         
         self._plot_pred_types(epoch, step, pred_types)
+
+
+        wandb.log({"val_predictions": table, "epoch": epoch, "step": step})
+        
+        # Create an Artifact (versioned folder)
+        # artifact = wandb.Artifact(name="nsynth_chord_datasets", type="dataset")
+        # .add the table to the artifact
+        # artifact.add(table, "val_predictions")
+        # Finally, log the artifact
+        # wandb.log_artifact(artifact)
         
         # TODO(jxm) fix this with a proper artifact
         # Create an Artifact (versioned folder)
-        artifact = wandb.Artifact(name="nsynth_chord_datasets", type="dataset")
-        
+        # artifact = wandb.Artifact(name="nsynth_chord_datasets", type="dataset")
         # .add the table to the artifact
-        artifact.add(table, "val_predictions")
-        
+        # artifact.add(table, "val_predictions")
         # Finally, log the artifact
-        wandb.log_artifact(artifact)
+        # wandb.log_artifact(artifact)
     
     def on_epoch_begin(self, epoch: int, step: int):
         # Have to re-get predictions because of this issue: 
