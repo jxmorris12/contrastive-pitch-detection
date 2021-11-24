@@ -15,7 +15,7 @@ import numpy as np
 from callbacks import LogNoteEmbeddingStatisticsCallback, LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
 from generator import AudioDataGenerator
-from models import ContrastiveModel, CREPE, Bytedance_Regress_pedal_Notes
+from models import ContrastiveModel, CREPE, Bytedance_Regress_pedal_Notes, S4Model
 from metrics import (
     categorical_accuracy, pitch_number_acc, NStringChordAccuracy,
     precision, recall, f1
@@ -78,6 +78,10 @@ def get_model(args):
     elif args.model == 'bytedance_tiny':
         model = Bytedance_Regress_pedal_Notes(
             num_output_nodes, out_activation, tiny=True
+        )
+    elif args.model == 'S4Model':
+        model = S4Model(
+            num_output_nodes, out_activation=out_activation
         )
     elif args.model == 'crepe_tiny':
         model = CREPE(
@@ -212,7 +216,9 @@ def main():
     # callbacks.append(LogRecordingSpectrogramCallback(args))
     if WANDB_ENABLED:
         # only compute this stuff if w&b is not disabled
-        callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps))
+        callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps, str_prefix='val_'))
+        # TODO(jxm): Reuse train predictions instead of recomputing them
+        callbacks.append(VisualizePredictionsCallback(args, model, train_generator, validation_steps, str_prefix='train_'))
         if args.contrastive:
             callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     

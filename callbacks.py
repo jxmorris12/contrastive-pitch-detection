@@ -99,12 +99,15 @@ class VisualizePredictionsCallback(Callback):
     """
     spectrogram_extractor: Spectrogram
     logmel_extractor: LogmelFilterBank
-    def __init__(self, args, model, val_generator, num_validation_steps, every_n_epochs=1, num_validation_points=32):
+    def __init__(self, args, model, val_generator, num_validation_steps,
+            every_n_epochs=1, num_validation_points=32,
+            str_prefix='val_'):
         self.args = args
         self.model = model
         self.val_generator = val_generator
         self.num_validation_steps = num_validation_steps
         self.every_n_epochs = every_n_epochs
+        self.str_prefix = str_prefix
         # Spectrogram and log-mel extractors (these are copied from bytedance piano transcription model input)
         self.spectrogram_extractor, self.logmel_extractor = get_spectrogram_and_logmel_extractor()
         # Find number of batches necessary for 1024 validation predictions
@@ -118,13 +121,13 @@ class VisualizePredictionsCallback(Callback):
         y_true_count = (y_true > 0.5).sum(axis=0)
         plt.figure(figsize=(12,3))
         sns.barplot(x=hist_x, y=y_true_count).set(title='y_true histogram')
-        wandb.log({"y_true_hist": wandb.Image(plt), 'epoch': epoch, 'step': step})
+        wandb.log({f"{self.str_prefix}y_true_hist": wandb.Image(plt), 'epoch': epoch, 'step': step})
         plt.cla()
         plt.close()
         y_pred_count = (y_pred > 0.5).sum(axis=0)
         plt.figure(figsize=(12,3))
         sns.barplot(x=hist_x, y=y_pred_count).set(title='y_pred histogram')
-        wandb.log({"y_pred_hist": wandb.Image(plt), 'epoch': epoch, 'step': step})
+        wandb.log({f"{self.str_prefix}y_pred_hist": wandb.Image(plt), 'epoch': epoch, 'step': step})
         plt.cla()
         plt.close()
     
@@ -142,8 +145,8 @@ class VisualizePredictionsCallback(Callback):
         data = [[pred_type, count] for (pred_type, count) in pred_types.items()]
         table = wandb.Table(data=data, columns = ["prediction_type", "count"])
         wandb.log({
-            "val_pred_types" : 
-                wandb.plot.bar(table, "prediction_type", "count", title="Validation prediction types"),
+            f"{self.str_prefix}_pred_types" : 
+                wandb.plot.bar(table, "prediction_type", "count", title="prediction types"),
             'epoch': epoch, 'step': step
         })
 
@@ -168,7 +171,7 @@ class VisualizePredictionsCallback(Callback):
         logmels = self.logmel_extractor(spectrograms)
         for waveform, true_labels, preds, frame_info in tqdm.tqdm(
                 zip(x, y_true, y_pred, frame_info), 
-                desc='VisualizePredictionsCallback plotting and logging instance-level metrics',
+                desc=f'VisualizePredictionsCallback ({self.str_prefix}) plotting and logging instance-level metrics',
                 total=len(frame_info)
             ):
             n += 1
@@ -195,7 +198,7 @@ class VisualizePredictionsCallback(Callback):
         self._plot_pred_types(epoch, step, pred_types)
 
 
-        wandb.log({"val_predictions": table, "epoch": epoch, "step": step})
+        wandb.log({f"{self.str_prefix}_predictions": table, "epoch": epoch, "step": step})
         
         # Create an Artifact (versioned folder)
         # artifact = wandb.Artifact(name="nsynth_chord_datasets", type="dataset")

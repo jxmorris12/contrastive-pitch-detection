@@ -6,13 +6,16 @@ from generator import AudioDataGenerator
 #    l = f()
 #    print(len(l))
 
+frame_length = 1024
+batch_size = 64
+max_polyphony = 6
 gen = AudioDataGenerator(
-    [], 1024, 6,
+    [], frame_length, max_polyphony,
     randomize_train_frame_offsets=False,
-    batch_size=4,
+    batch_size=batch_size,
     augmenter=None,
     sample_rate=16000,
-    num_fake_nsynth_chords=1000,
+    num_fake_nsynth_chords=10000,
 )
 
 x,y = gen[0]

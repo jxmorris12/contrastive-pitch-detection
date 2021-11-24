@@ -67,6 +67,7 @@ class TrackFrameSampler:
     def __init__(self, tracks, frame_length, batch_size, label_format, min_midi, 
         max_midi, max_polyphony, batch_by_track=False, skip_empty_samples=True,
         randomize_train_frame_offsets=False):
+        assert batch_size > 0, 'batch size must be positive'
         self.tracks = tracks
         self.frame_length = frame_length
         self.batch_size = batch_size
@@ -112,6 +113,8 @@ class TrackFrameSampler:
                     continue
                 else:
                     self.track_frame_index_pairs.append((track_idx, frame_idx))
+        if len(self.track_frame_index_pairs) == 0:
+            raise RuntimeError(f'Got 0 track_frame_index_pairs from {len(self.tracks)} tracks')
         
     def frequencies_to_label(self, frequencies):
         """ Converts a list of frequencies to the proper format for training. """

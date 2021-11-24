@@ -99,12 +99,12 @@ class AudioDataGenerator(torch.utils.data.Dataset):
 class NSynthChordFakeTrackList:
     """Generates data by adding NSynth notes together to make chords."""
     
-    def __init__(self, num_chord_batches: int, batch_size: int,
+    def __init__(self, num_chords_per_epoch: int, batch_size: int,
             sample_rate: int, frame_length: int,
             min_midi: int, max_midi: int,
-            random_chords=False # Either random chords or top-K chords (calculated from MAESTRO dataset)
+            random_chords=True # Either random chords or top-K chords (calculated from MAESTRO dataset)
         ):
-        self.num_chord_batches = num_chord_batches
+        self.num_chords_per_epoch = num_chords_per_epoch
         self.batch_size = batch_size
         self.min_midi = min_midi
         self.max_midi = max_midi
@@ -133,7 +133,7 @@ class NSynthChordFakeTrackList:
 
     def __len__(self) -> int:
         """Denotes the number of batches per epoch."""
-        return self.num_chord_batches
+        return self.num_chords_per_epoch
         
     @property
     def _midi_span(self):
@@ -145,7 +145,9 @@ class NSynthChordFakeTrackList:
         # Choose a note to get chords for at each index
         # TODO add feature to get most popular chord from a file
         if self.random_chords:
-            batch_midi_idxs = np.random.choice(self._midi_span, size=self.batch_size, p=self._midi_probs)
+            # TODO(jxm): choose max polyphony based on args.max_polyphony argument
+            num_notes = np.random.choice([1,2,3,4,5,6])
+            batch_midi_idxs = np.random.choice(self._midi_span, size=num_notes, p=self._midi_probs)
             midis = [m for m in self._midis[batch_midi_idxs] if m > 0]
         else:
             midis = random.choice(self.top_chords)
@@ -155,11 +157,13 @@ class NSynthChordFakeTrackList:
         chord_audio_chunk = AnnotatedAudioChunk(
             0, len(waveform), 
             tracks[0].sample_rate, 
-            midis, [0], [1]
+           [midi_to_hz(m) for m in midis], [0], [1]
         )
         chord_track_name = '--'.join((t.name for t in tracks))
+        dataset_names = sorted(set((t.dataset_name for t in tracks)))
+        chord_dataset_name = '--'.join(dataset_names)
         return Track(
-            'nsynth', chord_track_name,
+            chord_dataset_name, chord_track_name,
             [chord_audio_chunk], waveform,
             tracks[0].sample_rate, 
             name=chord_track_name
