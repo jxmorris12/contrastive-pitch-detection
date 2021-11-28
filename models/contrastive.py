@@ -24,31 +24,8 @@ class ContrastiveModel(nn.Module):
         """Returns representation of an audio input."""
         return self.model(x)
 
-    # def _get_probs_no_optimizer(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, grad_step_size=10.0) -> torch.Tensor:
-    #     """Returns note-wise probabilities for an audio input.
-        
-    #     Works by doing gradient descent to find the label to maximize the similarity
-    #         between label_embeddings and audio_embeddings.
-    #     """
-    #     labels = torch.rand(
-    #         (len(audio_embeddings), self.num_labels),
-    #         dtype=torch.float32, requires_grad=True,
-    #         device=audio_embeddings.device
-    #     )
-    #     cos_sim = torch.nn.CosineSimilarity(dim=1)
-    #     last_loss = 1.0
-    #     for _ in range(n_steps):
-    #         label_embeddings = labels @ self.embedding.weight
-    #         loss = torch.mean(1 - cos_sim(audio_embeddings.detach(), label_embeddings))
-    #         # print(f'Similarity at step {_}: {(1-loss).item():.3f}')
-    #         loss.backward()
-    #         labels = torch.tensor((labels - grad_step_size * labels.grad), requires_grad=True)
-    #         # print(torch.abs(loss - last_loss))
-    #         if torch.abs(loss - last_loss) < 0.001:
-    #             break
-    #         last_loss = loss    
-            
-    #     return labels.detach()
+    def encode_note_labels(self, labels: torch.Tensor) -> torch.Tensor:
+         return labels @ self.embedding.weight #  [b,n] @ [n, d] -> [b, d]
 
     def get_probs(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, lr=10.0) -> torch.Tensor:
         """Returns note-wise probabilities for an audio input.
@@ -56,16 +33,12 @@ class ContrastiveModel(nn.Module):
         Works by doing gradient descent to find the label to maximize the similarity
             between label_embeddings and audio_embeddings.
         """
-        assert torch.is_grad_enabled(), "ContrastiveModel uses gradients to find most likely note labels"
+        assert torch.is_grad_enabled(), "ContrastiveModel needs gradients to find most likely note labels"
 
         if audio_embeddings.requires_grad:
             # Prevent PyTorch from tracking the computational graph for the audio
             # embeddings. We only want to keep gradients wrt `labels` below.
             audio_embeddings = audio_embeddings.detach()
-
-        note_embeddings = self.embedding.weight
-        if note_embeddings.requires_grad:
-            note_embeddings = note_embeddings.detach()
 
         labels = torch.rand(
             (len(audio_embeddings), self.num_labels),
@@ -76,7 +49,7 @@ class ContrastiveModel(nn.Module):
         cos_sim = torch.nn.CosineSimilarity(dim=1)
         last_loss = 1.0
         for _ in range(n_steps):
-            label_embeddings = labels @ note_embeddings
+            label_embeddings = self.encode_note_labels(labels)
             loss = torch.mean(1 - cos_sim(audio_embeddings, label_embeddings))
             # print(f'Similarity at step {_}: {(1-loss).item():.3f}')
             loss.backward()
@@ -108,7 +81,7 @@ class ContrastiveModel(nn.Module):
         # breakpoint()
         batch_size, num_notes = note_labels.shape
         assert num_notes == self.num_labels
-        chord_embeddings = note_labels @ self.embedding.weight # [b,n] @ [n, d] -> [b, d]
+        chord_embeddings = self.encode_note_labels(note_labels)
         # Make sure the shapes match up.
         assert chord_embeddings.shape == audio_embeddings.shape
         # Normalize to create embeddings.

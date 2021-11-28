@@ -250,7 +250,7 @@ def main():
                 checkpoint_path = os.path.join(
                     model_folder, f'{epoch}_epochs.pth')   
                 torch.save(checkpoint, checkpoint_path)
-                logging.info(f'Model saved to {checkpoint_path}')
+                print(f'Model saved to {checkpoint_path}')
         # Get data and predictions.
         (data, labels) = train_generator[step % len(train_generator)]
         data, labels = data.to(device), labels.to(device)
