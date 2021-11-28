@@ -35,7 +35,7 @@ def load_nsynth_chords(split='train', tiny=False):
         data.append(Track(f'nsynth_chords_{split}', sample_name, [new_sample], raw_waveform, SAMPLE_RATE, name=sample_name))
 
     if tiny: 
-        data = random.sample(data, int(len(data) * 0.025))
+        data = random.sample(data, int(len(data) * 0.04))
     
     return data
 

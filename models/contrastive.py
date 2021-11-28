@@ -8,8 +8,12 @@ class ContrastiveModel(nn.Module):
     batch_size: int
     def __init__(self, model: nn.Module, min_midi: int, max_midi: int, output_dim: int):
         super().__init__()
+        # From CLIP: "The learnable temperature parameter
+        # τ was initialized to the equivalent of 0.07 from (Wu et al.,
+        # 2018) and clipped to prevent scaling the logits by more
+        # than 100 which we found necessary to prevent training instability."
         self.temperature = 1.0 # TODO(jxm): consider making temperature learnable like in CLIP
-        self.num_labels = (max_midi - min_midi + 1)
+        self.num_labels = (max_midi - min_midi + 1) # typically 88 (num notes on a piano)
         self.embedding = nn.Embedding(
             self.num_labels, output_dim
         )
@@ -17,28 +21,105 @@ class ContrastiveModel(nn.Module):
         self.model = model
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Returns representation of an audio input."""
         return self.model(x)
 
-    def get_probs(self, A_f: torch.Tensor) -> torch.Tensor:
-        # TODO: fix this
-        logits = A_f @ self.embedding.weight.T # [b, d] @ [d, n] -> [b, n]
-        return torch.sigmoid(logits)
+    # def _get_probs_no_optimizer(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, grad_step_size=10.0) -> torch.Tensor:
+    #     """Returns note-wise probabilities for an audio input.
+        
+    #     Works by doing gradient descent to find the label to maximize the similarity
+    #         between label_embeddings and audio_embeddings.
+    #     """
+    #     labels = torch.rand(
+    #         (len(audio_embeddings), self.num_labels),
+    #         dtype=torch.float32, requires_grad=True,
+    #         device=audio_embeddings.device
+    #     )
+    #     cos_sim = torch.nn.CosineSimilarity(dim=1)
+    #     last_loss = 1.0
+    #     for _ in range(n_steps):
+    #         label_embeddings = labels @ self.embedding.weight
+    #         loss = torch.mean(1 - cos_sim(audio_embeddings.detach(), label_embeddings))
+    #         # print(f'Similarity at step {_}: {(1-loss).item():.3f}')
+    #         loss.backward()
+    #         labels = torch.tensor((labels - grad_step_size * labels.grad), requires_grad=True)
+    #         # print(torch.abs(loss - last_loss))
+    #         if torch.abs(loss - last_loss) < 0.001:
+    #             break
+    #         last_loss = loss    
+            
+    #     return labels.detach()
 
-    def contrastive_loss(self, notes: torch.Tensor, A_f: torch.Tensor) -> torch.Tensor:
-        # We sum feature representations of multiple notes to make a chord feature representation.
+    def get_probs(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, lr=10.0) -> torch.Tensor:
+        """Returns note-wise probabilities for an audio input.
+        
+        Works by doing gradient descent to find the label to maximize the similarity
+            between label_embeddings and audio_embeddings.
+        """
+        assert torch.is_grad_enabled(), "ContrastiveModel uses gradients to find most likely note labels"
+
+        if audio_embeddings.requires_grad:
+            # Prevent PyTorch from tracking the computational graph for the audio
+            # embeddings. We only want to keep gradients wrt `labels` below.
+            audio_embeddings = audio_embeddings.detach()
+
+        note_embeddings = self.embedding.weight
+        if note_embeddings.requires_grad:
+            note_embeddings = note_embeddings.detach()
+
+        labels = torch.rand(
+            (len(audio_embeddings), self.num_labels),
+            dtype=torch.float32, requires_grad=True,
+            device=audio_embeddings.device
+        )
+        optimizer = torch.optim.SGD([labels], lr=lr, momentum=0.9)
+        cos_sim = torch.nn.CosineSimilarity(dim=1)
+        last_loss = 1.0
+        for _ in range(n_steps):
+            label_embeddings = labels @ note_embeddings
+            loss = torch.mean(1 - cos_sim(audio_embeddings, label_embeddings))
+            # print(f'Similarity at step {_}: {(1-loss).item():.3f}')
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            torch.clamp(labels, min=0.0, max=1.0)
+
+            if torch.abs(loss - last_loss) < epsilon:
+                break
+            last_loss = loss        
+            
+        return labels.detach()
+
+    def contrastive_loss(self, audio_embeddings: torch.Tensor, note_labels: torch.Tensor) -> torch.Tensor:
+        """Computes the contrastive loss of CLIP.
+
+        Arguments:
+            audio_embeddings (float torch.Tensor): model outputs for audio inputs of shape [batch_size, self.embedding.output_dim]
+                example shape: [32, 256]
+            note_labels (torch.tensor): one-hot chord labels of shape [batch_size, self.num_labels]
+                example shape: [32, 88]
+        
+        Returns:
+            loss (float torch.Tensor): scalar output, loss across both dimensions
+            logits (float torch.Tensor):
+        """
+        # We sum embeddings of multiple notes to make a chord embedding.
         # TODO optionally add MLP layer to joint embedding.
-        batch_size, num_notes = A_f.shape
+        # breakpoint()
+        batch_size, num_notes = note_labels.shape
         assert num_notes == self.num_labels
-        N_f = notes @ self.embedding.weight.T # [b,n] @ [n, d] -> [b, d]
+        chord_embeddings = note_labels @ self.embedding.weight # [b,n] @ [n, d] -> [b, d]
         # Make sure the shapes match up.
-        assert A_f.shape == N_f.shape
+        assert chord_embeddings.shape == audio_embeddings.shape
         # Normalize to create embeddings.
         # TODO(jxm) should I do bilinear interpolation here?
-        A_e = A_f / torch.norm(A_f, dim=1, keepdim=True)
-        N_e = N_f / torch.norm(N_f, dim=1, keepdim=True)
-        logits = (A_e @ N_e.T) * np.exp(self.temperature)
+        normalized_audio_embeddings = audio_embeddings / torch.norm(audio_embeddings, dim=1, keepdim=True)
+        normalized_chord_embeddings = chord_embeddings / torch.norm(chord_embeddings, dim=1, keepdim=True)
+        logits = (normalized_audio_embeddings @ normalized_chord_embeddings.T) * np.exp(self.temperature)
         # Symmetric loss function
         labels = torch.diag(torch.ones(batch_size)).to(logits.device) # Identity matrix
         loss_a = torch.nn.functional.binary_cross_entropy_with_logits(labels, logits)
-        loss_n = torch.nn.functional.binary_cross_entropy_with_logits(labels.T, logits.T)
-        return (loss_a + loss_n)/2
+        loss_n = torch.nn.functional.binary_cross_entropy_with_logits(labels, logits.T)
+
+        loss = (loss_a + loss_n)/2
+        return loss, logits

@@ -231,8 +231,10 @@ class VisualizePredictionsCallback(Callback):
             frame_info.extend(frame_info_batch)
             with torch.no_grad():
                 predictions = self.model(x_batch.to(device))
-                if self.args.contrastive:
-                    predictions = self.model.get_probs(predictions)
+            if self.args.contrastive:
+                # Second step to get probabilities from contrastive model (must be
+                # outside of torch.no_grad()!).
+                predictions = self.model.get_probs(predictions)
             y_pred.append(predictions.cpu())
         # Aggregate predictions from all batches
         x = np.vstack(x)

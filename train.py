@@ -71,7 +71,11 @@ def parse_args():
 def get_model(args):
     # TODO(jxm): support nn.DataParallel here
     num_output_nodes = 256 if args.contrastive else 88
-    out_activation = 'softmax' if args.max_polyphony == 1 else 'sigmoid'
+    if args.contrastive:
+        out_activation = None
+    else:
+        out_activation = 'softmax' if args.max_polyphony == 1 else 'sigmoid'
+
     if args.model == 'bytedance':
         model = Bytedance_Regress_pedal_Notes(
             num_output_nodes, out_activation, tiny=False
@@ -226,12 +230,11 @@ def main():
     
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.epochs} epochs) = {steps_per_epoch * args.epochs} ')
     total_num_steps = steps_per_epoch * args.epochs
-    log_interval = int(steps_per_epoch / 10.0) # TODO(jxm): argparse for logs_per_epoch?
+    log_interval = max(int(steps_per_epoch / 10.0), 1) # TODO(jxm): argparse for logs_per_epoch?
     pbar = tqdm.trange(total_num_steps)
     for step in pbar:
         # Pre-epoch callbacks.
         epoch = int(step / steps_per_epoch)
-        pbar.set_description(f'Training (Epoch {epoch})')
         if step % steps_per_epoch == 0:
             # Callbacks.
             for callback in callbacks:
@@ -239,7 +242,7 @@ def main():
             # Adjust learning rate.
             if epoch > 0: scheduler.step()
             # Save model to disk.
-            if (epoch+1) % 10 == 0:
+            if (epoch+1) % 1 == 0:
                 checkpoint = {
                     'step': step, 
                     'model': model.state_dict()
@@ -254,16 +257,20 @@ def main():
         output = model(data)
         # Compute loss and backpropagate.
         if args.contrastive:
-            loss = model.contrastive_loss(output, labels)
-            output = model.get_probs(output) # Get actual probabilities for notes (for logging)
+            loss, contrastive_logits = model.contrastive_loss(output, labels)
         else:
             loss = torch.nn.functional.binary_cross_entropy(output, labels)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
+        # Update progress bar with epoch and loss.
+        pbar.set_description(f'Training / Epoch {epoch} / Loss = {loss.item():.4f}')
         # Post-epoch callbacks.
         if (step+1) % log_interval == 0:
             # Compute train metrics.
+            if args.contrastive:
+                output = model.get_probs(output) # Get actual probabilities for notes (for logging)
+
             # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
             train_metrics_dict = { 
                 'train_loss': loss.item(),
@@ -277,8 +284,9 @@ def main():
                 train_metrics_dict[metric_name] = metric_val
                 logging.info('\t%s = %f', metric_name, metric_val)
             wandb.log(train_metrics_dict)
+
             # Compute validation metrics.
-            # TODO(jxm): avg validation metrics!
+            # TODO(jxm): smooth and avg validation metrics!
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
             for batch in val_generator:
                 (data, labels) = batch
@@ -286,11 +294,14 @@ def main():
                 with torch.no_grad():
                     output = model(data)
                     if args.contrastive:
-                        val_loss = model.contrastive_loss(output, labels)
-                        output = model.get_probs(output) # Get actual probabilities for notes (for logging)
+                        val_loss, val_contrastive_logits = model.contrastive_loss(output, labels)
                     else:
                         val_loss = torch.nn.functional.binary_cross_entropy(output, labels)
-                val_metrics_dict = { 'val_loss': val_loss.item(), 'step': step, 'epoch': epoch  }
+                if args.contrastive:
+                    # Get actual probabilities for notes (for logging).  Have to do this
+                    # outside of the torch.no_grad().
+                    output = model.get_probs(output)
+                val_metrics_dict = {  'val_loss': val_loss.item(), 'step': step, 'epoch': epoch  }
                 for name, metric in metrics.items():
                     metric_name = f'val_{name}'
                     metric_val = metric(output, labels)
@@ -299,6 +310,15 @@ def main():
                 wandb.log(val_metrics_dict)
                 break # TMP until we average val metrics!
             tqdm.tqdm.write(f'Train loss = {loss.item():.4f} / Val loss = {val_loss.item():.4f}')
+
+            # Plot contrastive logits.
+            if args.contrastive:
+                # TODO(jxm): Make these plots more interpretable with labels and colors and stuff.
+                wandb.log({ 
+                    'train_contrastive_logits': contrastive_logits,
+                    'val_contrastive_logits': val_contrastive_logits 
+                })
+
             # Also shuffle training data after each epoch.
             train_generator.on_epoch_end()
     
