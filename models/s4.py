@@ -1219,7 +1219,6 @@ class S4(nn.Module):
 class S4Model(nn.Module):
     def __init__(
         self, 
-        d_input, 
         d_output=10, 
         d_model=256, 
         n_layers=4, 
@@ -1229,6 +1228,7 @@ class S4Model(nn.Module):
     ):
         super().__init__()
 
+        d_input = 1 # Number of channels is 1
         self.prenorm = prenorm
 
         # Linear encoder (d_input = 1 for grayscale and 3 for RGB)
@@ -1254,8 +1254,9 @@ class S4Model(nn.Module):
 
     def forward(self, x):
         """
-        Input x is shape (B, L, d_input)
+        Input x is shape (B, L)
         """
+        x = torch.unsqueeze(x, dim=-1) # add d_input of 1
         x = self.encoder(x)  # (B, L, d_input) -> (B, L, d_model)
         
         x = x.transpose(-1, -2)  # (B, L, d_model) -> (B, d_model, L)
@@ -1283,9 +1284,7 @@ class S4Model(nn.Module):
         x = x.transpose(-1, -2)
 
         # Pooling: average pooling over the sequence length
-        # print('pre-pool x.shape:', x.shape)
         x = x.mean(dim=1)
-        # print('post-pool x.shape:', x.shape)
 
         # Decode the outputs
         x = self.decoder(x)  # (B, d_model) -> (B, d_output)

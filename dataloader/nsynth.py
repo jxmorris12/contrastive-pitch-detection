@@ -84,7 +84,7 @@ def _load_nsynth(split, instrument) -> List[Track]:
             [freq], [0], [1]
         )
         total_length += new_sample.length_in_seconds
-        track = Track('nsynth', sample_name, [new_sample], raw_waveform, SAMPLE_RATE, name=sample_name)
+        track = Track(f'nsynth_{split}', sample_name, [new_sample], raw_waveform, SAMPLE_RATE, name=sample_name)
         tracks.append(track)
     print(f'NSynth ({split},{instrument}) total number of samples: {total_count}')
     print(f'NSynth ({split},{instrument}) loaded {total_length:.2f}s of audio ({len(tracks)} tracks)')

@@ -1,13 +1,18 @@
 import torch
-from models import CREPE, Bytedance_Regress_pedal_Notes
 
-m = Bytedance_Regress_pedal_Notes(88, 'softmax', tiny=True).cuda()
+
+# from models import Bytedance_Regress_pedal_Notes
+# m = Bytedance_Regress_pedal_Notes(88, 'softmax', tiny=True).cuda()
+
+# from models import CREPE
 # m = CREPE(model='tiny', num_output_nodes=88, out_activation='sigmoid', load_pretrained=True).cuda()
+
+from models import S4Model
+m = S4Model(d_output=88, out_activation='sigmoid').cuda()
+
 x = torch.rand((16,16000))
-print('input.shape:', x.shape)
 output = m(x.cuda())
-print('output.shape:', output.shape)
-# breakpoint()
+breakpoint()
 
 from prettytable import PrettyTable
 

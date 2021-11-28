@@ -43,7 +43,8 @@ def parse_args():
     parser.add_argument('--frame_length', '--frame_length', type=int, default=1024, help='length of audio samples (in number of datapoints)')
     parser.add_argument('--num_fake_nsynth_chords', type=int, default=0,
         help='number of fake NSynth chord tracks to include. Will over-write train set!')
-    parser.add_argument('--model', type=str, default='bytedance_tiny', help='model to use for training', choices=('crepe_tiny', 'crepe_full', 'bytedance', 'bytedance_tiny'))
+    parser.add_argument('--model', type=str, default='bytedance_tiny', help='model to use for training',
+        choices=('crepe_tiny', 'crepe_full', 'bytedance', 'bytedance_tiny', 's4'))
 
     parser.add_argument('--randomize_val_and_training_data', '--rvatd', default=False,
         action='store_true', help='shuffle validation and training data')
@@ -79,9 +80,10 @@ def get_model(args):
         model = Bytedance_Regress_pedal_Notes(
             num_output_nodes, out_activation, tiny=True
         )
-    elif args.model == 'S4Model':
+    elif args.model == 's4':
         model = S4Model(
-            num_output_nodes, out_activation=out_activation
+            d_output=num_output_nodes,
+            out_activation=out_activation
         )
     elif args.model == 'crepe_tiny':
         model = CREPE(
@@ -295,6 +297,7 @@ def main():
                     val_metrics_dict[metric_name] = metric_val
                     logging.info('\t%s = %f', metric_name, metric_val)
                 wandb.log(val_metrics_dict)
+                break # TMP until we average val metrics!
             tqdm.tqdm.write(f'Train loss = {loss.item():.4f} / Val loss = {val_loss.item():.4f}')
             # Also shuffle training data after each epoch.
             train_generator.on_epoch_end()
