@@ -13,7 +13,8 @@ class ContrastiveModel(nn.Module):
         # τ was initialized to the equivalent of 0.07 from (Wu et al.,
         # 2018) and clipped to prevent scaling the logits by more
         # than 100 which we found necessary to prevent training instability."
-        self.temperature = torch.tensor(1.0, requires_grad=True)
+        self.temperature = torch.nn.parameter.Parameter(
+            torch.tensor(0.07, dtype=torch.float32), requires_grad=True)
         self.num_labels = (max_midi - min_midi + 1) # typically 88 (num notes on a piano)
         # TODO(jxm): Consider a different dimensionality for embedding and projection.
         embedding_dim = output_dim
@@ -33,7 +34,6 @@ class ContrastiveModel(nn.Module):
     def encode_note_labels(self, labels: torch.Tensor) -> torch.Tensor:
         # TODO(jxm): Consider concatenating + padding instead of summing note embddings.
         joint_embedding = labels @ self.embedding.weight #  [b,n] @ [n, d] -> [b, d]
-        # return joint_embedding
         return self.embedding_proj(joint_embedding)
 
     def get_probs(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, lr=10.0) -> torch.Tensor:
@@ -93,19 +93,21 @@ class ContrastiveModel(nn.Module):
             logits (float torch.Tensor): audio<->chord logits of shape (batch_size, batch_size)
         """
         # We sum embeddings of multiple notes to make a chord embedding.
-        # breakpoint()
         batch_size, num_notes = note_labels.shape
         assert num_notes == self.num_labels
         chord_embeddings = self.encode_note_labels(note_labels)
         assert chord_embeddings.shape == audio_embeddings.shape
-        # Normalize embeddings.
+        # Normalize embeddings and compute logits.
         normalized_audio_embeddings = audio_embeddings / torch.norm(audio_embeddings, p=2, dim=1, keepdim=True)
         normalized_chord_embeddings = chord_embeddings / torch.norm(chord_embeddings, p=2, dim=1, keepdim=True)
-        logits = torch.matmul(normalized_audio_embeddings, normalized_chord_embeddings.T) * torch.exp(self.temperature)
+        unscaled_audio_to_chord_sim = torch.matmul(normalized_audio_embeddings, normalized_chord_embeddings.T)
+        audio_to_chord_sim = unscaled_audio_to_chord_sim * torch.exp(self.temperature)
+        chord_to_audio_sim = audio_to_chord_sim.T
         # Compute labels when there may be duplicates.
         labels = (note_labels[:,None] == note_labels).all(2).type(torch.float32)
         labels = labels / labels.sum(1)
-        loss_a = torch.nn.functional.binary_cross_entropy_with_logits(logits, labels)
-        loss_n = torch.nn.functional.binary_cross_entropy_with_logits(logits.T, labels)
+        # Compute loss across both axes.
+        loss_a = torch.nn.functional.cross_entropy(audio_to_chord_sim, labels)
+        loss_n = torch.nn.functional.cross_entropy(chord_to_audio_sim, labels.T)
         loss = (loss_a + loss_n)/2
-        return loss, logits
+        return loss, unscaled_audio_to_chord_sim

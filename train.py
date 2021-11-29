@@ -10,7 +10,9 @@ import torch
 import tqdm
 import wandb
 
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 
 from callbacks import LogNoteEmbeddingStatisticsCallback, LogRecordingSpectrogramCallback, VisualizePredictionsCallback
 from dataloader import MusicDataLoader, dataset_load_funcs
@@ -312,11 +314,32 @@ def main():
             tqdm.tqdm.write(f'Train loss = {loss.item():.4f} / Val loss = {val_loss.item():.4f}')
 
             # Plot contrastive logits.
-            if args.contrastive:
-                # TODO(jxm): Make these plots more interpretable with labels and colors and stuff.
+            if args.contrastive and WANDB_ENABLED and False:
+                # Log train logits
+                plt.figure(figsize=(7,7))
+                (
+                    sns.heatmap(contrastive_logits.detach().cpu(), vmin=-1, vmax=1)
+                       .set(title='Heatmap of logits [train]')
+                )
                 wandb.log({ 
-                    'train_contrastive_logits': contrastive_logits,
-                    'val_contrastive_logits': val_contrastive_logits 
+                    'train_contrastive_logits': wandb.Image(plt),
+                })
+                plt.cla()
+                plt.close()
+                # Log val logits
+                plt.figure(figsize=(7,7))
+                (
+                    sns.heatmap(val_contrastive_logits.detach().cpu(), vmin=-1, vmax=1)
+                       .set(title='Heatmap of logits [validation]')
+                )
+                wandb.log({
+                    'val_contrastive_logits': wandb.Image(plt), 
+                })
+                plt.cla()
+                plt.close()
+                # Log model temperature
+                wandb.log({
+                    'model_temperature': model.temperature
                 })
 
             # Also shuffle training data after each epoch.
