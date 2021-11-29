@@ -242,7 +242,7 @@ def main():
             # Adjust learning rate.
             if epoch > 0: scheduler.step()
             # Save model to disk.
-            if (epoch+1) % 1 == 0:
+            if (epoch+1) % 5 == 0:
                 checkpoint = {
                     'step': step, 
                     'model': model.state_dict()
@@ -280,7 +280,7 @@ def main():
             logger.info('*** Computing training metrics for epoch %d (step %d) ***', epoch, step)
             for name, metric in metrics.items():
                 metric_name = f'train_{name}'
-                metric_val = metric(output, labels)
+                metric_val = metric(output, labels).item()
                 train_metrics_dict[metric_name] = metric_val
                 logging.info('\t%s = %f', metric_name, metric_val)
             wandb.log(train_metrics_dict)

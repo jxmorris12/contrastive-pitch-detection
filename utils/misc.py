@@ -119,6 +119,9 @@ class TrackFrameSampler:
         if len(self.track_frame_index_pairs) == 0:
             raise RuntimeError(f'Got 0 track_frame_index_pairs from {len(self.tracks)} tracks')
         
+        if not self.batch_by_track:
+            random.shuffle(self.track_frame_index_pairs)
+        
     def frequencies_to_label(self, frequencies):
         """ Converts a list of frequencies to the proper format for training. """
         if not len(frequencies):
