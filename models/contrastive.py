@@ -19,7 +19,13 @@ class ContrastiveModel(nn.Module):
         self.embedding = nn.Embedding(
             self.num_labels, embedding_dim
         )
-        self.embedding_proj = nn.Linear(
+        self.embedding_proj_1 = nn.Linear(
+            in_features=embedding_dim, out_features=output_dim
+        )
+        self.embedding_proj_2 = nn.Linear(
+            in_features=embedding_dim, out_features=output_dim
+        )
+        self.embedding_proj_3 = nn.Linear(
             in_features=embedding_dim, out_features=output_dim
         )
         torch.nn.init.xavier_uniform_(self.embedding.weight)
@@ -31,8 +37,13 @@ class ContrastiveModel(nn.Module):
 
     def encode_note_labels(self, labels: torch.Tensor) -> torch.Tensor:
         # TODO(jxm): Consider concatenating + padding instead of summing note embddings.
-         joint_embedding = labels @ self.embedding.weight #  [b,n] @ [n, d] -> [b, d]
-         return self.embedding_proj(joint_embedding)
+        x = labels @ self.embedding.weight # form chord embedding from notes: [b,n] @ [n, d] -> [b, d]
+        # x = nn.functional.relu(x)
+        x = self.embedding_proj_1(x)
+        x = nn.functional.relu(x)
+        x = self.embedding_proj_2(x)
+        x = nn.functional.relu(x)
+        return self.embedding_proj_3(x)
 
     def get_probs(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, lr=10.0) -> torch.Tensor:
         """Returns note-wise probabilities for an audio input.
@@ -99,9 +110,11 @@ class ContrastiveModel(nn.Module):
         # Normalize embeddings.
         normalized_audio_embeddings = audio_embeddings / torch.norm(audio_embeddings, p=2, dim=1, keepdim=True)
         normalized_chord_embeddings = chord_embeddings / torch.norm(chord_embeddings, p=2, dim=1, keepdim=True)
-        logits = (normalized_audio_embeddings @ normalized_chord_embeddings.T) * np.exp(self.temperature)
+        logits = torch.matmul(normalized_audio_embeddings, normalized_chord_embeddings.T) * np.exp(self.temperature)
         # Symmetric loss function
         labels = torch.diag(torch.ones(batch_size)).to(logits.device) # Identity matrix
+        loss_a=0; loss_n=0
+        #########IS THIS RIGHT?################
         loss_a = torch.nn.functional.binary_cross_entropy_with_logits(labels, logits)
         loss_n = torch.nn.functional.binary_cross_entropy_with_logits(labels, logits.T)
         loss = (loss_a + loss_n)/2
