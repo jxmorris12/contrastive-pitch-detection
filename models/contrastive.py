@@ -12,20 +12,14 @@ class ContrastiveModel(nn.Module):
         # τ was initialized to the equivalent of 0.07 from (Wu et al.,
         # 2018) and clipped to prevent scaling the logits by more
         # than 100 which we found necessary to prevent training instability."
-        self.temperature = 1.0 # TODO(jxm): consider making temperature learnable like in CLIP
+        self.temperature = torch.tensor(0.07, requires_grad=True)
         self.num_labels = (max_midi - min_midi + 1) # typically 88 (num notes on a piano)
         # TODO(jxm): Consider a different dimensionality for embedding and projection.
         embedding_dim = output_dim
         self.embedding = nn.Embedding(
             self.num_labels, embedding_dim
         )
-        self.embedding_proj_1 = nn.Linear(
-            in_features=embedding_dim, out_features=output_dim
-        )
-        self.embedding_proj_2 = nn.Linear(
-            in_features=embedding_dim, out_features=output_dim
-        )
-        self.embedding_proj_3 = nn.Linear(
+        self.embedding_proj = nn.Linear(
             in_features=embedding_dim, out_features=output_dim
         )
         torch.nn.init.xavier_uniform_(self.embedding.weight)
@@ -37,13 +31,8 @@ class ContrastiveModel(nn.Module):
 
     def encode_note_labels(self, labels: torch.Tensor) -> torch.Tensor:
         # TODO(jxm): Consider concatenating + padding instead of summing note embddings.
-        x = labels @ self.embedding.weight # form chord embedding from notes: [b,n] @ [n, d] -> [b, d]
-        # x = nn.functional.relu(x)
-        x = self.embedding_proj_1(x)
-        x = nn.functional.relu(x)
-        x = self.embedding_proj_2(x)
-        x = nn.functional.relu(x)
-        return self.embedding_proj_3(x)
+         joint_embedding = labels @ self.embedding.weight #  [b,n] @ [n, d] -> [b, d]
+         return self.embedding_proj(joint_embedding)
 
     def get_probs(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, lr=10.0) -> torch.Tensor:
         """Returns note-wise probabilities for an audio input.
