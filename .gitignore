@@ -2,6 +2,7 @@ __pycache__/
 
 dataloader/.nsynth_cache/
 models/assets/
+notebooks/.ipynb_checkpoints/
 outputs/
 wandb/
 

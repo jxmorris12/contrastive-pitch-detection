@@ -89,7 +89,10 @@ class TrackFrameSampler:
         if self.batch_by_track:
             return len(self.tracks)
         else:
-            length = len(self.track_frame_index_pairs) // self.batch_size
+            if len(self.track_frame_index_pairs) == 0:
+                length = 0
+            else:
+                length = max(len(self.track_frame_index_pairs) // self.batch_size, 1)
             if length == 0:
                 raise RuntimeError('TrackFrameSampler has length 0')
             return length
