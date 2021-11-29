@@ -1,8 +1,8 @@
-import numpy as np
 import torch
 from torch import nn
 
 class ContrastiveModel(nn.Module):
+    """A CLIP-inspired contrastive learning model for jointly learning chords and audio."""
     embedding: nn.Embedding
     model: nn.Module
     batch_size: int
@@ -12,7 +12,7 @@ class ContrastiveModel(nn.Module):
         # τ was initialized to the equivalent of 0.07 from (Wu et al.,
         # 2018) and clipped to prevent scaling the logits by more
         # than 100 which we found necessary to prevent training instability."
-        self.temperature = torch.tensor(0.07, requires_grad=True)
+        self.temperature = torch.tensor(1.0, requires_grad=True)
         self.num_labels = (max_midi - min_midi + 1) # typically 88 (num notes on a piano)
         # TODO(jxm): Consider a different dimensionality for embedding and projection.
         embedding_dim = output_dim
@@ -99,12 +99,12 @@ class ContrastiveModel(nn.Module):
         # Normalize embeddings.
         normalized_audio_embeddings = audio_embeddings / torch.norm(audio_embeddings, p=2, dim=1, keepdim=True)
         normalized_chord_embeddings = chord_embeddings / torch.norm(chord_embeddings, p=2, dim=1, keepdim=True)
-        logits = torch.matmul(normalized_audio_embeddings, normalized_chord_embeddings.T) * np.exp(self.temperature)
+        logits = torch.matmul(normalized_audio_embeddings, normalized_chord_embeddings.T) * torch.exp(self.temperature)
         # Symmetric loss function
         labels = torch.diag(torch.ones(batch_size)).to(logits.device) # Identity matrix
         loss_a=0; loss_n=0
         #########IS THIS RIGHT?################
-        loss_a = torch.nn.functional.binary_cross_entropy_with_logits(labels, logits)
-        loss_n = torch.nn.functional.binary_cross_entropy_with_logits(labels, logits.T)
+        loss_a = torch.nn.functional.binary_cross_entropy_with_logits(logits, labels)
+        loss_n = torch.nn.functional.binary_cross_entropy_with_logits(logits.T, labels)
         loss = (loss_a + loss_n)/2
         return loss, logits
