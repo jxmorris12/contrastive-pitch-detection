@@ -13,7 +13,7 @@ from .utils import midi_to_hz, AnnotatedAudioChunk, Track
 trim_silence = False
 # TODO(jxm): look up instrument numbers to enable other options
 INSTRUMENT_FAMILY_NUMS = { 'keyboard': 4 }
-def _load_nsynth(split, instrument) -> List[Track]:
+def _load_nsynth(split, instrument=None) -> List[Track]:
     import tensorflow_datasets as tfds
 
     assert split in {'train', 'test', 'valid'}

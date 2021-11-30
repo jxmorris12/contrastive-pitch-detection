@@ -274,6 +274,9 @@ def midi_to_hz(d):
 from .nsynth import load_nsynth
 from .nsynth_chords import load_nsynth_chords
 dataset_load_funcs = { 
+    'nsynth_train': functools.partial(load_nsynth, 'train'),
+    'nsynth_valid': functools.partial(load_nsynth, 'valid'),
+    'nsynth_test': functools.partial(load_nsynth, 'test'),
     #
     'nsynth_keyboard_train': functools.partial(load_nsynth, 'train', 'keyboard'),
     'nsynth_keyboard_valid': functools.partial(load_nsynth, 'valid', 'keyboard'),

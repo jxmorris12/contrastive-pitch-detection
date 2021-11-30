@@ -105,7 +105,7 @@ class ContrastiveModel(nn.Module):
         chord_to_audio_sim = audio_to_chord_sim.T
         # Compute labels when there may be duplicates.
         labels = (note_labels[:,None] == note_labels).all(2).type(torch.float32)
-        labels = labels / labels.sum(1)
+        labels = labels / labels.sum(1) # TODO(jxm): is this right? :/
         # Compute loss across both axes.
         loss_a = torch.nn.functional.cross_entropy(audio_to_chord_sim, labels)
         loss_n = torch.nn.functional.cross_entropy(chord_to_audio_sim, labels.T)

@@ -206,23 +206,21 @@ def main():
             break
         metrics[f'n_string_acc_{n_strings}'] = NStringChordAccuracy(n_strings)
 
-    wandb.watch(model)
-
     #
     # callbacks
     #
     time_str = time.strftime("%Y%m%d-%H%M%S")
-    model_folder = os.path.join('outputs', f'crepe-{time_str}')
+    model_folder = os.path.join('outputs', f'{args.model}-{time_str}')
     pathlib.Path(model_folder).mkdir(parents=True, exist_ok=True)
     print(f'Saving args & model to {model_folder}')
     with open(os.path.join(model_folder, 'args.json'), 'w') as args_file:
         json.dump(args.__dict__, args_file)
-    # TODO(jxm): implement saving best models with pytorch
     
     callbacks = []
-    # TODO(jxm): reinstate this callback with a piano piece
+    # TODO(jxm): reinstate this callback with a piano piece?
     # callbacks.append(LogRecordingSpectrogramCallback(args))
     if WANDB_ENABLED:
+        wandb.watch(model)
         # only compute this stuff if w&b is not disabled
         callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps, str_prefix='val_'))
         # TODO(jxm): Reuse train predictions instead of recomputing them
@@ -244,7 +242,7 @@ def main():
             # Adjust learning rate.
             if epoch > 0: scheduler.step()
             # Save model to disk.
-            if (epoch+1) % 5 == 0:
+            if (epoch+1) % 3 == 0:
                 checkpoint = {
                     'step': step, 
                     'model': model.state_dict()
@@ -313,8 +311,8 @@ def main():
                 break # TMP until we average val metrics!
             tqdm.tqdm.write(f'Train loss = {loss.item():.4f} / Val loss = {val_loss.item():.4f}')
 
-            # Plot contrastive logits.
-            if args.contrastive and WANDB_ENABLED and False:
+            # Plot contrastive logits heatmaps.
+            if args.contrastive and WANDB_ENABLED:
                 # Log train logits
                 plt.figure(figsize=(7,7))
                 (
@@ -339,7 +337,7 @@ def main():
                 plt.close()
                 # Log model temperature
                 wandb.log({
-                    'model_temperature': model.temperature
+                    'model_temperature': model.temperature.item()
                 })
 
             # Also shuffle training data after each epoch.

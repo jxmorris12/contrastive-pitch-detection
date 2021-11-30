@@ -109,7 +109,8 @@ class NSynthChordFakeTrackList:
         self.min_midi = min_midi
         self.max_midi = max_midi
         tracks = MusicDataLoader(sample_rate, frame_length, 
-            datasets=['nsynth_keyboard_train'],
+            datasets=['nsynth_train'],
+            # datasets=['nsynth_keyboard_train'],
             # datasets=['nsynth_keyboard_valid'],
             batch_by_track=False, val_split=0.0
         ).load()
@@ -145,7 +146,16 @@ class NSynthChordFakeTrackList:
         # Choose a note to get chords for at each index
         # TODO add feature to get most popular chord from a file
         if self.random_chords:
+            # TODO(jxm): add argparse/settings that control flags, like the geometric dist on notes here
             # TODO(jxm): choose max polyphony based on args.max_polyphony argument
+            #
+            # geometric p=0.5
+            # num_notes = np.random.choice([1,2,3,4,5,6], p=[0.5, 0.25, 0.125, 0.0625, 0.03125, 0.03125])
+            #
+            # geometric p=0.8
+            # num_notes = np.random.choice([1,2,3,4,5,6], p=[0.8000512032770098, 0.16001024065540193, 0.03200204813108038, 0.006400409626216074, 0.0012800819252432147, 0.00025601638504864284])
+            #
+            # uniform
             num_notes = np.random.choice([1,2,3,4,5,6])
             batch_midi_idxs = np.random.choice(self._midi_span, size=num_notes, p=self._midi_probs)
             midis = [m for m in self._midis[batch_midi_idxs] if m > 0]
