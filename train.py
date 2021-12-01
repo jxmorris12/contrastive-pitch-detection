@@ -22,11 +22,14 @@ from metrics import (
     categorical_accuracy, pitch_number_acc, NStringChordAccuracy,
     precision, recall, f1
 )
+from utils import TensorRunningAverages
 
 logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 num_cpus = len(os.sched_getaffinity(0)) # ask the OS how many cpus we have (stackoverflow.com/questions/1006289)
 
+# This flag allows us to skip some expensive computations (like making graphs)
+# if we're not gonna log anything to W&B.
 WANDB_ENABLED = wandb.setup().settings.mode != "disabled"
 
 def set_random_seed(r):
@@ -241,15 +244,16 @@ def main():
     if WANDB_ENABLED:
         wandb.watch(model)
         # only compute this stuff if w&b is not disabled
-        callbacks.append(VisualizePredictionsCallback(args, model, val_generator, validation_steps, str_prefix='val_'))
+        callbacks.append(VisualizePredictionsCallback(args, model, val_generator, str_prefix='val_'))
         # TODO(jxm): Reuse train predictions instead of recomputing them
-        callbacks.append(VisualizePredictionsCallback(args, model, train_generator, validation_steps, str_prefix='train_'))
+        callbacks.append(VisualizePredictionsCallback(args, model, train_generator, str_prefix='train_'))
         if args.contrastive:
             callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     
+    running_averages = TensorRunningAverages()
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.epochs} epochs) = {steps_per_epoch * args.epochs} ')
     total_num_steps = steps_per_epoch * args.epochs
-    log_interval = max(int(steps_per_epoch / 10.0), 1) # TODO(jxm): argparse for logs_per_epoch?
+    log_interval = max(int(steps_per_epoch / 15.0), 1) # TODO(jxm): argparse for logs_per_epoch?
     pbar = tqdm.trange(total_num_steps)
     for step in pbar:
         # Pre-epoch callbacks.
@@ -282,33 +286,43 @@ def main():
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
+
+        # Compute train metrics.
+        if args.contrastive:
+            output = model.get_probs(output) # Get actual probabilities for notes (for logging)
+
+        running_averages.update('train_loss', loss)
+        if args.contrastive:
+            running_averages.update('train_loss_a', loss_a)
+            running_averages.update('train_loss_n', loss_n)
+        for name, metric in metrics.items():
+            running_averages.update(f'train_{name}', metric(output, labels))
         # Update progress bar with epoch and loss.
         pbar.set_description(f'Training / Epoch {epoch} / Loss = {loss.item():.4f}')
         # Post-epoch callbacks.
         if (step+1) % log_interval == 0:
-            # Compute train metrics.
-            if args.contrastive:
-                output = model.get_probs(output) # Get actual probabilities for notes (for logging)
-
-            # TODO(jxm): Mechanism for averaging metrics instead of logging just for one batch (too noisy).
+            # Log train metrics.
+            logger.info('*** Logging training metrics for epoch %d (step %d) ***', epoch, step)
             train_metrics_dict = { 
-                'train_loss': loss.item(),
+                'train_loss': running_averages.get('train_loss'),
                 'learning_rate': scheduler.get_last_lr()[0],
                 'step': step, 'epoch': epoch 
             }
             logger.info('*** Computing training metrics for epoch %d (step %d) ***', epoch, step)
             for name, metric in metrics.items():
                 metric_name = f'train_{name}'
-                metric_val = metric(output, labels).item()
+                metric_val = running_averages.get(metric_name)
                 train_metrics_dict[metric_name] = metric_val
                 logging.info('\t%s = %f', metric_name, metric_val)
             wandb.log(train_metrics_dict)
-
             # Compute validation metrics.
-            # TODO(jxm): smooth and avg validation metrics!
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
-            for batch in val_generator:
-                (data, labels) = batch
+            max_num_val_batches = max(512 // args.batch_size, 1)
+            for val_batch_idx, val_batch in enumerate(val_generator):
+                if val_batch_idx >= max_num_val_batches: 
+                    logging.info(f'Stopping validation early after {max_num_val_batches} batches')
+                    break
+                (data, labels) = val_batch
                 data, labels = data.to(device), labels.to(device)
                 with torch.no_grad():
                     output = model(data)
@@ -316,20 +330,27 @@ def main():
                         val_loss, (val_loss_a, val_loss_n, val_contrastive_logits) = model.contrastive_loss(output, labels)
                     else:
                         val_loss = torch.nn.functional.binary_cross_entropy(output, labels)
+                    if args.contrastive:
+                        output = model.get_probs(output)
+                running_averages.update('val_loss', val_loss)
                 if args.contrastive:
-                    # Get actual probabilities for notes (for logging).  Have to do this
-                    # outside of the torch.no_grad().
-                    output = model.get_probs(output)
-                val_metrics_dict = {  'val_loss': val_loss.item(), 'step': step, 'epoch': epoch  }
+                    running_averages.update('val_loss_a', val_loss_a)
+                    running_averages.update('val_loss_n', val_loss_n)
                 for name, metric in metrics.items():
-                    metric_name = f'val_{name}'
-                    metric_val = metric(output, labels)
-                    val_metrics_dict[metric_name] = metric_val
-                    logging.info('\t%s = %f', metric_name, metric_val)
-                wandb.log(val_metrics_dict)
-                break # TMP until we average val metrics!
-            tqdm.tqdm.write(f'Train loss = {loss.item():.4f} / Val loss = {val_loss.item():.4f}')
+                    running_averages.update(f'val_{name}', metric(output, labels))
+            tqdm.tqdm.write(f'Train loss = {running_averages.get("train_loss"):.4f} / Val loss = {running_averages.get("val_loss"):.4f}')
 
+            # Log validation metrics.
+            val_metrics_dict = {  
+                'val_loss': running_averages.get('val_loss'),
+                'step': step, 'epoch': epoch  
+            }
+            for name, metric in metrics.items():
+                metric_name = f'val_{name}'
+                metric_val = running_averages.get(metric_name)
+                val_metrics_dict[metric_name] = metric_val
+                logging.info('\t%s = %f', metric_name, metric_val)
+            wandb.log(val_metrics_dict)
             # Plot contrastive logits heatmaps.
             if args.contrastive and WANDB_ENABLED:
                 # Log train logits
@@ -339,10 +360,7 @@ def main():
                     vmin=-1, vmax=1
                 ).set(title='Heatmap of logits [train]')
                 wandb.log({ 
-                    'train_loss_a': loss_a,
-                    'train_loss_n': loss_n,
                     'train_contrastive_logits': wandb.Image(plt),
-                    'model_temperature': model.temperature.item(),
                     'epoch': epoch, 'step': step
                 })
                 plt.cla()
@@ -354,13 +372,22 @@ def main():
                     vmin=-1, vmax=1
                 ).set(title='Heatmap of logits [validation]')
                 wandb.log({
-                    'val_loss_a': val_loss_a,
-                    'val_loss_n': val_loss_n,
                     'val_contrastive_logits': wandb.Image(plt), 
                     'epoch': epoch, 'step': step
                 })
                 plt.cla()
                 plt.close()
+                # Log losses
+                wandb.log({
+                    'train_loss_a': running_averages.get('train_loss_a'),
+                    'train_loss_n': running_averages.get('train_loss_n'),
+                    'model_temperature': model.temperature.item(),
+                    'val_loss_a': running_averages.get('val_loss_a'),
+                    'val_loss_n': running_averages.get('val_loss_n'),
+                    'epoch': epoch, 'step': step
+                })
+            # Clear all metrics.
+            running_averages.clear_all()
 
             # Also shuffle training data after each epoch.
             train_generator.on_epoch_end()

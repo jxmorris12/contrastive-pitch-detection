@@ -1,10 +1,14 @@
+from typing import Dict
+
 import collections
 import functools
 import io
 import itertools
 import math
-import numpy as np
 import random
+
+import numpy as np
+import torch
 
 def midi_vals_to_categorical(midi_values, min_midi, max_midi):
     """ Converts a list of float midi values to a single categorical vector. """
@@ -46,7 +50,7 @@ def midi_to_hz(d):
 
 FrameInfo = collections.namedtuple('FrameInfo', ['dataset_name', 'track_name', 'sample_rate', 'start_time', 'end_time'])
 
-def note_and_neighbors(note_midi, min_midi, max_midi):
+def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=8):
     neighbor_notes = [
         note_midi - 24, # two octaves down
         note_midi - 12, # octave down
@@ -54,9 +58,13 @@ def note_and_neighbors(note_midi, min_midi, max_midi):
         note_midi + 24, # two octaves up
         note_midi - 1, # note off-by-one
         note_midi + 1, # note off-by-one
-        note_midi + 4, # major third
-        note_midi + 7, # major fifth
+        note_midi - 4, # perfect third
+        note_midi + 4, # perfect third
+        note_midi + 7, # perfect fifth
+        note_midi - 7, # perfect fifth
     ]
+    all_other_notes = set(range(min_midi, max_midi+1)) - set(neighbor_notes)
+    neighbor_notes += random.sample(all_other_notes, num_random_notes)
     neighbor_notes = [n for n in neighbor_notes if min_midi <= n <= max_midi] # filter out notes that are too high or low
     one_note_chords = [[note_midi]] + [[n] for n in neighbor_notes]
     two_note_chords = [[note_midi, n] for n in neighbor_notes]
@@ -165,6 +173,7 @@ class TrackFrameSampler:
     def __getitem__(self, idx, get_info=False):
         """ Gets the next batch of audio. """
         if idx >= len(self):
+            print('Raising stopiteration with idx', idx, 'and len(self) =', len(self))
             raise StopIteration
         batch_track_frame_index_pairs = self.track_frame_index_pairs[idx * self.batch_size : (idx + 1) * self.batch_size]
         batch_x = []
@@ -265,3 +274,33 @@ def get_prediction_type(pred_midis, true_midis):
             return 'underpredicted_incorrect_chord'
     else:
         return 'other'
+
+
+class TensorRunningAverages:
+    _store_sum: Dict[str, torch.Tensor]
+    _store_total: Dict[str, torch.Tensor]
+
+    def __init__(self):
+        self._store_sum = {}
+        self._store_total = {}
+
+    def update(self, key: str, val: torch.Tensor) -> None:
+        if key not in self._store_sum:
+            self.clear(key)
+        self._store_sum[key] += val.detach().cpu()
+        self._store_total[key] += 1
+
+    def get(self, key: str) -> float:
+        total = max(self._store_total.get(key).item(), 1.0)
+        return (self._store_sum[key] / float(total)).item()
+    
+    def clear(self, key: str) -> None:
+        self._store_sum[key] = torch.tensor(0.0, dtype=torch.float32)
+        self._store_total[key] = torch.tensor(0, dtype=torch.int32)
+    
+    def clear_all(self) -> None:
+        for key in self._store_sum:
+            self.clear(key)
+
+
+

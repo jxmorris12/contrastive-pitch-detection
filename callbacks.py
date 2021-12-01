@@ -99,20 +99,19 @@ class VisualizePredictionsCallback(Callback):
     """
     spectrogram_extractor: Spectrogram
     logmel_extractor: LogmelFilterBank
-    def __init__(self, args, model, val_generator, num_validation_steps,
+    def __init__(self, args, model, val_generator,
             every_n_epochs=1, num_validation_points=32,
             str_prefix='val_'):
         self.args = args
         self.model = model
         self.val_generator = val_generator
-        self.num_validation_steps = num_validation_steps
         self.every_n_epochs = every_n_epochs
         self.str_prefix = str_prefix
         # Spectrogram and log-mel extractors (these are copied from bytedance piano transcription model input)
         self.spectrogram_extractor, self.logmel_extractor = get_spectrogram_and_logmel_extractor()
         # Find number of batches necessary for 1024 validation predictions
-        self.num_validation_points = num_validation_points
-        self.num_val_batches = min(num_validation_steps, math.ceil( num_validation_points / args.batch_size))
+        self.num_validation_points = min(args.batch_size, num_validation_points)
+        self.num_val_batches = min(len(val_generator), math.ceil( self.num_validation_points / args.batch_size))
         print(f'VisualizePredictionsCallback initialized with {self.num_val_batches} validation batches')
     
     def _log_overall_metrics(self, epoch, step, x, y_true, y_pred, frame_info):
@@ -219,7 +218,7 @@ class VisualizePredictionsCallback(Callback):
         # Have to re-get predictions because of this issue: 
         # https://github.com/keras-team/keras/issues/10472
         # TODO(jxm): Since we switched to pytorch, this isn't necessary. We should re-use the predictions!
-        rand_idxs = random.sample(range(self.num_validation_steps), self.num_val_batches)
+        rand_idxs = random.sample(range(len(self.val_generator)), self.num_val_batches)
         x, y_true, y_pred, frame_info = [], [], [], []
         for idx in rand_idxs:
             x_batch, y_true_batch, frame_info_batch = self.val_generator.__getitem__(idx, get_info=True)
@@ -231,10 +230,8 @@ class VisualizePredictionsCallback(Callback):
             frame_info.extend(frame_info_batch)
             with torch.no_grad():
                 predictions = self.model(x_batch.to(device))
-            if self.args.contrastive:
-                # Second step to get probabilities from contrastive model (must be
-                # outside of torch.no_grad()!).
-                predictions = self.model.get_probs(predictions)
+                if self.args.contrastive:
+                    predictions = self.model.get_probs(predictions)
             y_pred.append(predictions.cpu())
         # Aggregate predictions from all batches
         x = np.vstack(x)

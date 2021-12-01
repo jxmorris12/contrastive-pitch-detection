@@ -76,13 +76,9 @@ class AudioDataGenerator(torch.utils.data.Dataset):
             # neighbors.
             # TODO(jxm): I really need to refactor, this part is getting bad.
             # TODO(jxm): do this in a more principled way.
-            if i % 2 == 0:
-                random_note = np.random.choice(range(self.min_midi, self.max_midi))
-                self.track_sampler.tracks.chords_to_sample_from = note_and_neighbors(
-                    random_note, self.min_midi, self.max_midi)
-            else:
-                # Every other batch, just take sample normal random chords.
-                self.track_sampler.tracks.chords_to_sample_from = []
+            random_note = np.random.choice(range(self.min_midi, self.max_midi))
+            self.track_sampler.tracks.chords_to_sample_from = note_and_neighbors(
+                random_note, self.min_midi, self.max_midi)
         return self.track_sampler.__getitem__(i, get_info=get_info)
 
     def __getitem__(self, i: int, get_info=False):
@@ -127,8 +123,8 @@ class NSynthChordFakeTrackList:
         self.max_midi = max_midi
         tracks = MusicDataLoader(sample_rate, frame_length, 
             # datasets=['nsynth_train'],
-            # datasets=['nsynth_keyboard_train'],
-            datasets=['nsynth_keyboard_valid'],
+            datasets=['nsynth_keyboard_train'],
+            # datasets=['nsynth_keyboard_valid'],
             batch_by_track=False, val_split=0.0
         ).load()
         self.notes_by_midi = collections.defaultdict(list)
@@ -185,7 +181,7 @@ class NSynthChordFakeTrackList:
         # TODO add feature to get most popular chord from a file
         if self.chords_to_sample_from:
             # print(f'* * * NSynthChordFakeTrackList using {len(self.chords_to_sample_from)} chords')
-            midis = np.random.choice(self.chords_to_sample_from)
+            midis = random.choice(self.chords_to_sample_from)
         elif self.random_chords:
             # print(f'* * * NSynthChordFakeTrackList generating random chords')
             # TODO(jxm): add argparse/settings that control flags, like the geometric dist on notes here

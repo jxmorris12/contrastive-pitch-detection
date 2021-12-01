@@ -1,3 +1,5 @@
+import functools
+
 import numpy as np
 import torch
 from torch import nn
@@ -26,6 +28,10 @@ class ContrastiveModel(nn.Module):
         )
         torch.nn.init.xavier_uniform_(self.embedding.weight)
         self.model = model
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Returns representation of an audio input."""
@@ -36,48 +42,42 @@ class ContrastiveModel(nn.Module):
         joint_embedding = labels @ self.embedding.weight #  [b,n] @ [n, d] -> [b, d]
         return self.embedding_proj(joint_embedding)
 
+    def _get_probs_single_note(self, audio_embedding: torch.Tensor, epsilon: float) -> torch.Tensor:
+        """Returns label for a single audio waveform, found with beam search."""
+        # TODO support beam width > 1?
+        cos_sim = functools.partial(torch.nn.functional.cosine_similarity, dim=1)
+        best_labels = torch.zeros((88))
+        zero_label_encoding = self.encode_note_labels(best_labels[None].to(self.device))
+        best_overall_sim = cos_sim(audio_embedding.squeeze(), zero_label_encoding).item()
+        for _ in range(6):
+            new_labels = best_labels.repeat((88,1))
+            new_notes = torch.eye(88)
+            new_labels = torch.maximum(new_notes, new_labels) # 88 tensors, each one has a new 1 at a different position
+            label_encodings = self.encode_note_labels(new_labels.to(self.device))
+            cos_sims = cos_sim(audio_embedding, label_encodings)
+            best_idx = cos_sims.argmax()
+            best_sim = cos_sims[best_idx].item()
+            
+            if best_sim - best_overall_sim > epsilon:
+                best_overall_sim = best_sim
+                best_labels = new_labels[best_idx]
+            else:
+                break
+        return best_labels.to(self.device)
+
     def get_probs(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, lr=10.0) -> torch.Tensor:
         """Returns note-wise probabilities for an audio input.
         
-        Works by doing gradient descent to find the label to maximize the similarity
+        Works by doing beam search to find the label to maximize the similarity
             between label_embeddings and audio_embeddings.
 
         Args:
             audio_embeddings (torch.Tensor): The audio embeddings for which we want labels.
-            n_steps (int): Maximum number of steps before convergence. 
             epsilon (float): Minimum amount of change in cosine similarity between audio and
                 note embeddings between steps. If change drops below this amount, stops.
-            lr (float): Learning rate for SGD.
         """
-        assert torch.is_grad_enabled(), "ContrastiveModel needs gradients enabled"
-
-        if audio_embeddings.requires_grad:
-            # Prevent PyTorch from tracking the computational graph for the audio
-            # embeddings. We only want to keep gradients wrt `labels` below.
-            audio_embeddings = audio_embeddings.detach()
-
-        labels = torch.rand(
-            (len(audio_embeddings), self.num_labels),
-            dtype=torch.float32, requires_grad=True,
-            device=audio_embeddings.device
-        )
-        optimizer = torch.optim.SGD([labels], lr=lr, momentum=0.9)
-        cos_sim = torch.nn.CosineSimilarity(dim=1)
-        last_loss = 1.0
-        for _ in range(n_steps):
-            label_embeddings = self.encode_note_labels(labels)
-            loss = torch.mean(1 - cos_sim(audio_embeddings, label_embeddings))
-            # print(f'Similarity at step {_}: {(1-loss).item():.3f}')
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            labels = torch.clamp(labels, min=0.0, max=1.0).detach().requires_grad_(True)
-
-            if torch.abs(loss - last_loss) < epsilon:
-                break
-            last_loss = loss        
-            
-        return labels.detach()
+        
+        return torch.stack([self._get_probs_single_note(e, epsilon) for e in audio_embeddings])
 
     def contrastive_loss(self, audio_embeddings: torch.Tensor, note_labels: torch.Tensor) -> torch.Tensor:
         """Computes the contrastive loss of CLIP.
