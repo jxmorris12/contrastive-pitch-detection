@@ -1,6 +1,7 @@
 import collections
-import io
 import functools
+import io
+import itertools
 import math
 import numpy as np
 import random
@@ -44,6 +45,26 @@ def midi_to_hz(d):
     return (2 ** exp) * 440.0
 
 FrameInfo = collections.namedtuple('FrameInfo', ['dataset_name', 'track_name', 'sample_rate', 'start_time', 'end_time'])
+
+def note_and_neighbors(note_midi, min_midi, max_midi):
+    neighbor_notes = [
+        note_midi - 24, # two octaves down
+        note_midi - 12, # octave down
+        note_midi + 12, # octave up
+        note_midi + 24, # two octaves up
+        note_midi - 1, # note off-by-one
+        note_midi + 1, # note off-by-one
+        note_midi + 4, # major third
+        note_midi + 7, # major fifth
+    ]
+    neighbor_notes = [n for n in neighbor_notes if min_midi <= n <= max_midi] # filter out notes that are too high or low
+    one_note_chords = [[note_midi]] + [[n] for n in neighbor_notes]
+    two_note_chords = [[note_midi, n] for n in neighbor_notes]
+    three_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 2)]
+    four_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 3)]
+    five_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 4)]
+    six_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 5)]
+    return one_note_chords + two_note_chords + three_note_chords + four_note_chords + six_note_chords
 
 class TrackFrameSampler:
     """ Given a list of tracks of different lengths, how can you randomly
@@ -105,6 +126,8 @@ class TrackFrameSampler:
             and filters out samples with too many notes being played as according
             to ``self.max_polyphony``.
         """
+        # TODO(jxm): This only works with randomly generated data because the waveforms
+        # all have the same shape, which is dumb. Need to do this better somehow.
         self.track_frame_index_pairs = []
         for track_idx in range(len(self.tracks)):
             track = self.tracks[track_idx]
