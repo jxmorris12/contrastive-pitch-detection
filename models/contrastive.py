@@ -110,4 +110,4 @@ class ContrastiveModel(nn.Module):
         loss_a = torch.nn.functional.cross_entropy(audio_to_chord_sim, labels)
         loss_n = torch.nn.functional.cross_entropy(chord_to_audio_sim, labels.T)
         loss = (loss_a + loss_n)/2
-        return loss, unscaled_audio_to_chord_sim
+        return loss, (loss_a, loss_n, audio_to_chord_sim)

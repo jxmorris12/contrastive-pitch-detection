@@ -47,7 +47,7 @@ def parse_args():
         help='number of fake NSynth chord tracks to include. Will over-write train set!')
     parser.add_argument('--model', type=str, default='bytedance_tiny', help='model to use for training',
         choices=('crepe_tiny', 'crepe_full', 'bytedance', 'bytedance_tiny', 's4'))
-
+    parser.add_argument('--model_weights', type=str, default=None, help='path to model weights to load')
     parser.add_argument('--randomize_val_and_training_data', '--rvatd', default=False,
         action='store_true', help='shuffle validation and training data')
     parser.add_argument('--val_split', type=float, default=0.05, help='Size of the validation set relative to total number of waveforms. Will be an approximate, since individual tracks are grouped within train or validation only.')
@@ -57,13 +57,16 @@ def parse_args():
         action='store_true', help='train with contrastive loss')
     parser.add_argument('--max_polyphony', type=int, default=float('inf'), choices=list(range(6)),
         help='If specified, will filter out frames with greater than this number of notes')
-
-    parser.add_argument('--n_gpus', default=None, 
+    parser.add_argument('--epochs_per_model_save', default=3, 
+        type=int, help='number of epochs between model saves')
+    parser.add_argument('--n_gpus', default=1, 
         type=int, help='distributes the model acros ``n_gpus`` GPUs')
     
     args = parser.parse_args()
     args.min_midi = 21  # Bottom of piano
     args.max_midi = 108 # Top of piano
+
+    assert args.n_gpus == 1, "multi-GPU training not supported yet"
     
     assert args.min_midi < args.max_midi, "Must provide a positive range of MIDI values where max_midi > min_midi"
     set_random_seed(args.random_seed)
@@ -108,10 +111,26 @@ def get_model(args):
     else:
         raise ValueError(f'Invalid model {args.model}')
 
+    # Contrastive model wrapper
     if args.contrastive:
-        return ContrastiveModel(model, args.min_midi, args.max_midi, num_output_nodes)
-    else:
-        return model
+        model = ContrastiveModel(model, args.min_midi, args.max_midi, num_output_nodes)
+    
+    # Load pre-trained model weights
+    if args.model_weights:
+        print(f'*** loading model {args.model} from path {args.model_weights}')
+        model_weights = torch.load(args.model_weights, map_location=device)
+        # TODO(jxm): This is hard-coded for bytedance contrastive -> supervised. Need to do this
+        # in a more sustainable/extendable way.
+        # TODO(jxm): also, str.removeprefix() is only available in Python 3.9+
+        supervised_keys = {k.removeprefix('model.'): v for k,v in model_weights['model'].items()}
+        supervised_keys.pop('notes_model.fc.weight')
+        supervised_keys.pop('notes_model.fc.bias')
+        missing_keys, unexpected_keys = model.load_state_dict(
+            supervised_keys, strict=False)
+        print('*** loaded model weights, missing_keys =', missing_keys)
+        print('*** loaded model weights, unexpected_keys =', unexpected_keys)
+
+    return model
     
 def main():
     args = parse_args()
@@ -242,7 +261,7 @@ def main():
             # Adjust learning rate.
             if epoch > 0: scheduler.step()
             # Save model to disk.
-            if (epoch+1) % 3 == 0:
+            if (epoch+1) % args.epochs_per_model_save == 0:
                 checkpoint = {
                     'step': step, 
                     'model': model.state_dict()
@@ -257,7 +276,7 @@ def main():
         output = model(data)
         # Compute loss and backpropagate.
         if args.contrastive:
-            loss, contrastive_logits = model.contrastive_loss(output, labels)
+            loss, (loss_a, loss_n, contrastive_logits) = model.contrastive_loss(output, labels)
         else:
             loss = torch.nn.functional.binary_cross_entropy(output, labels)
         loss.backward()
@@ -294,7 +313,7 @@ def main():
                 with torch.no_grad():
                     output = model(data)
                     if args.contrastive:
-                        val_loss, val_contrastive_logits = model.contrastive_loss(output, labels)
+                        val_loss, (val_loss_a, val_loss_n, val_contrastive_logits) = model.contrastive_loss(output, labels)
                     else:
                         val_loss = torch.nn.functional.binary_cross_entropy(output, labels)
                 if args.contrastive:
@@ -315,30 +334,33 @@ def main():
             if args.contrastive and WANDB_ENABLED:
                 # Log train logits
                 plt.figure(figsize=(7,7))
-                (
-                    sns.heatmap(contrastive_logits.detach().cpu(), vmin=-1, vmax=1)
-                       .set(title='Heatmap of logits [train]')
-                )
+                sns.heatmap(
+                    torch.nn.functional.softmax(contrastive_logits, dim=1).detach().cpu(), 
+                    vmin=-1, vmax=1
+                ).set(title='Heatmap of logits [train]')
                 wandb.log({ 
+                    'train_loss_a': loss_a,
+                    'train_loss_n': loss_n,
                     'train_contrastive_logits': wandb.Image(plt),
+                    'model_temperature': model.temperature.item(),
+                    'epoch': epoch, 'step': step
                 })
                 plt.cla()
                 plt.close()
                 # Log val logits
                 plt.figure(figsize=(7,7))
-                (
-                    sns.heatmap(val_contrastive_logits.detach().cpu(), vmin=-1, vmax=1)
-                       .set(title='Heatmap of logits [validation]')
-                )
+                sns.heatmap(
+                    torch.nn.functional.softmax(val_contrastive_logits, dim=1).detach().cpu(),
+                    vmin=-1, vmax=1
+                ).set(title='Heatmap of logits [validation]')
                 wandb.log({
+                    'val_loss_a': val_loss_a,
+                    'val_loss_n': val_loss_n,
                     'val_contrastive_logits': wandb.Image(plt), 
+                    'epoch': epoch, 'step': step
                 })
                 plt.cla()
                 plt.close()
-                # Log model temperature
-                wandb.log({
-                    'model_temperature': model.temperature.item()
-                })
 
             # Also shuffle training data after each epoch.
             train_generator.on_epoch_end()
