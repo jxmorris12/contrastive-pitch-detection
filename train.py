@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=2)
     parser.add_argument('--random_seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--learning_rate', type=float, default=5e-4, help='Learning rate for adam optimizer')
+    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate for adam optimizer')
     parser.add_argument('--sample_rate', type=int, default=16_000, help='audio will be resampled to this sample rate before being passed to the model (measured in Hz)')
     parser.add_argument('--frame_length', '--frame_length', type=int, default=1024, help='length of audio samples (in number of datapoints)')
     parser.add_argument('--num_fake_nsynth_chords', type=int, default=0,
@@ -122,14 +122,20 @@ def get_model(args):
     if args.model_weights:
         print(f'*** loading model {args.model} from path {args.model_weights}')
         model_weights = torch.load(args.model_weights, map_location=device)
-        # TODO(jxm): This is hard-coded for bytedance contrastive -> supervised. Need to do this
-        # in a more sustainable/extendable way.
-        # TODO(jxm): also, str.removeprefix() is only available in Python 3.9+
-        supervised_keys = {k.removeprefix('model.'): v for k,v in model_weights['model'].items()}
-        supervised_keys.pop('notes_model.fc.weight')
-        supervised_keys.pop('notes_model.fc.bias')
-        missing_keys, unexpected_keys = model.load_state_dict(
-            supervised_keys, strict=False)
+        if args.contrastive:
+            # TODO(jxm): this is hard-coded for re-training the same model with the same params
+            # (for example, bytedance -> bytedance).
+            missing_keys, unexpected_keys = model.load_state_dict(
+                model_weights['model'], strict=False)
+        else:
+            # TODO(jxm): This is hard-coded for bytedance contrastive -> supervised. Need to do this
+            # in a more sustainable/extendable way.
+            # TODO(jxm): also, str.removeprefix() is only available in Python 3.9+
+            supervised_keys = {k.removeprefix('model.'): v for k,v in model_weights['model'].items()}
+            supervised_keys.pop('notes_model.fc.weight')
+            supervised_keys.pop('notes_model.fc.bias')
+            missing_keys, unexpected_keys = model.load_state_dict(
+                supervised_keys, strict=False)
         print('*** loaded model weights, missing_keys =', missing_keys)
         print('*** loaded model weights, unexpected_keys =', unexpected_keys)
 
@@ -137,6 +143,8 @@ def get_model(args):
     
 def main():
     args = parse_args()
+
+    torch.cuda.is_available(), "won't train without CUDA"
 
     wandb_project_name = 'nsynth_chords'
     wandb.init(entity='jxmorris12', project=os.environ.get('WANDB_PROJECT', wandb_project_name), job_type='train', config=args)
@@ -253,7 +261,8 @@ def main():
     running_averages = TensorRunningAverages()
     print(f'Total num steps = ({steps_per_epoch} steps_per_epoch) * ({args.epochs} epochs) = {steps_per_epoch * args.epochs} ')
     total_num_steps = steps_per_epoch * args.epochs
-    log_interval = max(int(steps_per_epoch / 15.0), 1) # TODO(jxm): argparse for logs_per_epoch?
+    log_interval = max(int(steps_per_epoch / 10.0), 1) # TODO(jxm): argparse for logs_per_epoch?
+    print(f'Logging every {log_interval} steps (since steps_per_epoch = {steps_per_epoch})')
     pbar = tqdm.trange(total_num_steps)
     for step in pbar:
         # Pre-epoch callbacks.
@@ -317,27 +326,27 @@ def main():
             wandb.log(train_metrics_dict)
             # Compute validation metrics.
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
-            max_num_val_batches = max(512 // args.batch_size, 1)
+            max_num_val_batches = max(1024 // args.batch_size, 1)
             for val_batch_idx, val_batch in enumerate(val_generator):
                 if val_batch_idx >= max_num_val_batches: 
                     logging.info(f'Stopping validation early after {max_num_val_batches} batches')
                     break
-                (data, labels) = val_batch
-                data, labels = data.to(device), labels.to(device)
+                (val_data, val_labels) = val_batch
+                val_data, val_labels = data.to(device), val_labels.to(device)
                 with torch.no_grad():
-                    output = model(data)
+                    val_output = model(val_data)
                     if args.contrastive:
-                        val_loss, (val_loss_a, val_loss_n, val_contrastive_logits) = model.contrastive_loss(output, labels)
+                        val_loss, (val_loss_a, val_loss_n, val_contrastive_logits) = model.contrastive_loss(val_output, val_labels)
                     else:
-                        val_loss = torch.nn.functional.binary_cross_entropy(output, labels)
+                        val_loss = torch.nn.functional.binary_cross_entropy(val_output, val_labels)
                     if args.contrastive:
-                        output = model.get_probs(output)
+                        val_output = model.get_probs(val_output)
                 running_averages.update('val_loss', val_loss)
                 if args.contrastive:
                     running_averages.update('val_loss_a', val_loss_a)
                     running_averages.update('val_loss_n', val_loss_n)
                 for name, metric in metrics.items():
-                    running_averages.update(f'val_{name}', metric(output, labels))
+                    running_averages.update(f'val_{name}', metric(val_output, val_labels))
             tqdm.tqdm.write(f'Train loss = {running_averages.get("train_loss"):.4f} / Val loss = {running_averages.get("val_loss"):.4f}')
 
             # Log validation metrics.
@@ -354,26 +363,30 @@ def main():
             # Plot contrastive logits heatmaps.
             if args.contrastive and WANDB_ENABLED:
                 # Log train logits
-                plt.figure(figsize=(7,7))
+                train_chord_labels = [(r.nonzero().flatten() + args.min_midi).detach().cpu().tolist() for r in labels]
+                plt.figure(figsize=(15,13))
                 sns.heatmap(
                     torch.nn.functional.softmax(contrastive_logits, dim=1).detach().cpu(), 
-                    vmin=-1, vmax=1
+                    xticklabels=train_chord_labels, yticklabels=train_chord_labels,
+                    vmin=-1, vmax=1,
                 ).set(title='Heatmap of logits [train]')
                 wandb.log({ 
-                    'train_contrastive_logits': wandb.Image(plt),
+                    'train_contrastive_logits_heatmap': wandb.Image(plt),
                     'epoch': epoch, 'step': step
                 })
                 plt.cla()
                 plt.close()
                 # Log val logits
-                plt.figure(figsize=(7,7))
+                val_chord_labels = [(r.nonzero().flatten() + args.min_midi).detach().cpu().tolist() for r in val_labels]
+                plt.figure(figsize=(15,13))
                 sns.heatmap(
                     torch.nn.functional.softmax(val_contrastive_logits, dim=1).detach().cpu(),
-                    vmin=-1, vmax=1
+                    xticklabels=val_chord_labels, yticklabels=val_chord_labels,
+                    vmin=-1, vmax=1,
                 ).set(title='Heatmap of logits [validation]')
                 wandb.log({
-                    'val_contrastive_logits': wandb.Image(plt), 
-                    'epoch': epoch, 'step': step
+                    'val_contrastive_logits_heatmap': wandb.Image(plt), 
+                    'epoch': epoch, 'step': step,
                 })
                 plt.cla()
                 plt.close()

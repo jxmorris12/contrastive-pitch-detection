@@ -170,7 +170,7 @@ class VisualizePredictionsCallback(Callback):
         logmels = self.logmel_extractor(spectrograms)
         for waveform, true_labels, preds, frame_info in tqdm.tqdm(
                 zip(x, y_true, y_pred, frame_info), 
-                desc=f'VisualizePredictionsCallback ({self.str_prefix}) plotting and logging instance-level metrics',
+                desc=f'VisualizePredictionsCallback ({self.str_prefix.strip("_")}) plotting and logging instance-level metrics',
                 total=len(frame_info)
             ):
             n += 1

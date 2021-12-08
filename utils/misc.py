@@ -50,7 +50,7 @@ def midi_to_hz(d):
 
 FrameInfo = collections.namedtuple('FrameInfo', ['dataset_name', 'track_name', 'sample_rate', 'start_time', 'end_time'])
 
-def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=8):
+def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=4):
     neighbor_notes = [
         note_midi - 24, # two octaves down
         note_midi - 12, # octave down
@@ -63,7 +63,9 @@ def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=8):
         note_midi + 7, # perfect fifth
         note_midi - 7, # perfect fifth
     ]
-    all_other_notes = set(range(min_midi, max_midi+1)) - set(neighbor_notes)
+    # all_other_notes = set(range(min_midi, max_midi+1)) - set(neighbor_notes)
+    all_other_notes = set(range(note_midi-12, note_midi+12)) - set(neighbor_notes)
+    all_other_notes = [n for n in all_other_notes if min_midi <= n <= max_midi]
     neighbor_notes += random.sample(all_other_notes, num_random_notes)
     neighbor_notes = [n for n in neighbor_notes if min_midi <= n <= max_midi] # filter out notes that are too high or low
     one_note_chords = [[note_midi]] + [[n] for n in neighbor_notes]
@@ -72,7 +74,14 @@ def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=8):
     four_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 3)]
     five_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 4)]
     six_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 5)]
-    return one_note_chords + two_note_chords + three_note_chords + four_note_chords + six_note_chords
+    return { 
+        1: one_note_chords,
+        2: two_note_chords,
+        3: three_note_chords,
+        4: four_note_chords,
+        5: five_note_chords,
+        6: six_note_chords,
+    }
 
 class TrackFrameSampler:
     """ Given a list of tracks of different lengths, how can you randomly
@@ -292,7 +301,7 @@ class TensorRunningAverages:
 
     def get(self, key: str) -> float:
         total = max(self._store_total.get(key).item(), 1.0)
-        return (self._store_sum[key] / float(total)).item()
+        return (self._store_sum[key] / float(total)).item() or 0.0
     
     def clear(self, key: str) -> None:
         self._store_sum[key] = torch.tensor(0.0, dtype=torch.float32)
@@ -301,6 +310,4 @@ class TensorRunningAverages:
     def clear_all(self) -> None:
         for key in self._store_sum:
             self.clear(key)
-
-
 

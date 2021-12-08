@@ -75,7 +75,7 @@ class AudioDataGenerator(torch.utils.data.Dataset):
             # (which is self.track_sampler.tracks) so that it can generate a batch of fake chords with 
             # neighbors.
             # TODO(jxm): I really need to refactor, this part is getting bad.
-            # TODO(jxm): do this in a more principled way.
+            # TODO(jxm): Choose number of notes in a more principled way.
             random_note = np.random.choice(range(self.min_midi, self.max_midi))
             self.track_sampler.tracks.chords_to_sample_from = note_and_neighbors(
                 random_note, self.min_midi, self.max_midi)
@@ -145,7 +145,7 @@ class NSynthChordFakeTrackList:
             self.top_chords = list(map(eval, chords_by_num_notes.keys()))
             print(f'NSynthChordFakeTrackList using top {len(self.top_chords)} chords')
         # Stores the chords that can be sampled from if not random. TODO(jxm): refactor to do this better.
-        self.chords_to_sample_from = []
+        self.chords_to_sample_from = {} # maps note_num -> midis, like { 1: [[14, 17, 20], ...], ...}
 
     def __len__(self) -> int:
         """Denotes the number of batches per epoch."""
@@ -181,7 +181,9 @@ class NSynthChordFakeTrackList:
         # TODO add feature to get most popular chord from a file
         if self.chords_to_sample_from:
             # print(f'* * * NSynthChordFakeTrackList using {len(self.chords_to_sample_from)} chords')
-            midis = random.choice(self.chords_to_sample_from)
+            # num_notes = np.random.choice([1,2,3,4,5,6])
+            num_notes = np.random.choice([1,2,3,4,5,6], p=[0.5, 0.25, 0.125, 0.0625, 0.03125, 0.03125])
+            midis = random.choice(self.chords_to_sample_from[num_notes])
         elif self.random_chords:
             # print(f'* * * NSynthChordFakeTrackList generating random chords')
             # TODO(jxm): add argparse/settings that control flags, like the geometric dist on notes here
