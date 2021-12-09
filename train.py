@@ -332,7 +332,7 @@ def main():
                     logging.info(f'Stopping validation early after {max_num_val_batches} batches')
                     break
                 (val_data, val_labels) = val_batch
-                val_data, val_labels = data.to(device), val_labels.to(device)
+                val_data, val_labels = val_data.to(device), val_labels.to(device)
                 with torch.no_grad():
                     val_output = model(val_data)
                     if args.contrastive:

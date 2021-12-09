@@ -77,7 +77,7 @@ class AudioDataGenerator(torch.utils.data.Dataset):
             # neighbors.
             # TODO(jxm): I really need to refactor, this part is getting bad.
             # TODO(jxm): Choose number of notes in a more principled way.
-            random_note = np.random.choice(range(self.min_midi, self.max_midi))
+            random_note = np.random.choice(range(self.min_midi, self.max_midi+1))
             self.track_sampler.tracks.chords_to_sample_from = note_and_neighbors(
                 random_note, self.min_midi, self.max_midi)
         return self.track_sampler.__getitem__(i, get_info=get_info)

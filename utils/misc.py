@@ -50,7 +50,7 @@ def midi_to_hz(d):
 
 FrameInfo = collections.namedtuple('FrameInfo', ['dataset_name', 'track_name', 'sample_rate', 'start_time', 'end_time'])
 
-def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=4):
+def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=10):
     neighbor_notes = [
         note_midi - 24, # two octaves down
         note_midi - 12, # octave down
@@ -66,7 +66,7 @@ def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=4):
     # all_other_notes = set(range(min_midi, max_midi+1)) - set(neighbor_notes)
     all_other_notes = set(range(note_midi-12, note_midi+12)) - set(neighbor_notes)
     all_other_notes = [n for n in all_other_notes if min_midi <= n <= max_midi]
-    neighbor_notes += random.sample(all_other_notes, num_random_notes)
+    neighbor_notes += random.sample(all_other_notes, min(num_random_notes, len(all_other_notes)))
     neighbor_notes = [n for n in neighbor_notes if min_midi <= n <= max_midi] # filter out notes that are too high or low
     one_note_chords = [[note_midi]] + [[n] for n in neighbor_notes]
     two_note_chords = [[note_midi, n] for n in neighbor_notes]
