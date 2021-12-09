@@ -58,7 +58,7 @@ def parse_args():
         help="Whether to add some randomness to frame offsets for training data")
     parser.add_argument('--contrastive', default=False, 
         action='store_true', help='train with contrastive loss')
-    parser.add_argument('--max_polyphony', type=int, default=float('inf'), choices=list(range(6)),
+    parser.add_argument('--max_polyphony', type=int, default=6, choices=list(range(6)),
         help='If specified, will filter out frames with greater than this number of notes')
     parser.add_argument('--epochs_per_model_save', default=3, 
         type=int, help='number of epochs between model saves')
@@ -116,7 +116,7 @@ def get_model(args):
 
     # Contrastive model wrapper
     if args.contrastive:
-        model = ContrastiveModel(model, args.min_midi, args.max_midi, num_output_nodes)
+        model = ContrastiveModel(model, args.min_midi, args.max_midi, num_output_nodes, args.max_polyphony)
     
     # Load pre-trained model weights
     if args.model_weights:
@@ -298,7 +298,9 @@ def main():
 
         # Compute train metrics.
         if args.contrastive:
+            model.eval()
             output = model.get_probs(output) # Get actual probabilities for notes (for logging)
+            model.train()
 
         running_averages.update('train_loss', loss)
         if args.contrastive:
@@ -327,6 +329,7 @@ def main():
             # Compute validation metrics.
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
             max_num_val_batches = max(1024 // args.batch_size, 1)
+            model.eval()
             for val_batch_idx, val_batch in enumerate(val_generator):
                 if val_batch_idx >= max_num_val_batches: 
                     logging.info(f'Stopping validation early after {max_num_val_batches} batches')
@@ -347,6 +350,7 @@ def main():
                     running_averages.update('val_loss_n', val_loss_n)
                 for name, metric in metrics.items():
                     running_averages.update(f'val_{name}', metric(val_output, val_labels))
+            model.train()
             tqdm.tqdm.write(f'Train loss = {running_averages.get("train_loss"):.4f} / Val loss = {running_averages.get("val_loss"):.4f}')
 
             # Log validation metrics.

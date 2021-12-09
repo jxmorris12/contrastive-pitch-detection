@@ -9,8 +9,10 @@ class ContrastiveModel(nn.Module):
     embedding: nn.Embedding
     model: nn.Module
     batch_size: int
-    def __init__(self, model: nn.Module, min_midi: int, max_midi: int, output_dim: int):
+    def __init__(self, model: nn.Module, min_midi: int, max_midi: int, output_dim: int,
+        max_polyphony: int, large_projection=True):
         super().__init__()
+        assert 1 <= max_polyphony <= 6
         # From CLIP: "The learnable temperature parameter
         # τ was initialized to the equivalent of 0.07 from (Wu et al.,
         # 2018) and clipped to prevent scaling the logits by more
@@ -23,11 +25,25 @@ class ContrastiveModel(nn.Module):
         self.embedding = nn.Embedding(
             self.num_labels, embedding_dim
         )
-        self.embedding_proj = nn.Linear(
-            in_features=embedding_dim, out_features=output_dim
-        )
+
+        if large_projection:
+            self.embedding_proj = nn.Sequential(
+                nn.Linear(
+                    in_features=embedding_dim, out_features=embedding_dim*2
+                ),
+                nn.BatchNorm1d(embedding_dim*2),
+                nn.ReLU(),
+                nn.Linear(
+                    in_features=embedding_dim*2, out_features=output_dim
+                )
+            )
+        else:
+            self.embedding_proj = nn.Linear(
+                in_features=embedding_dim, out_features=output_dim
+            )
         torch.nn.init.xavier_uniform_(self.embedding.weight)
         self.model = model
+        self.max_polyphony = max_polyphony
     
     @property
     def device(self):
@@ -49,7 +65,7 @@ class ContrastiveModel(nn.Module):
         best_labels = torch.zeros((88))
         zero_label_encoding = self.encode_note_labels(best_labels[None].to(self.device))
         best_overall_sim = cos_sim(audio_embedding.squeeze(), zero_label_encoding).item()
-        for _ in range(6):
+        for _ in range(1, self.max_polyphony+1):
             new_labels = best_labels.repeat((88,1))
             new_notes = torch.eye(88)
             new_labels = torch.maximum(new_notes, new_labels) # 88 tensors, each one has a new 1 at a different position
@@ -108,6 +124,6 @@ class ContrastiveModel(nn.Module):
         labels = labels / labels.sum(1) # TODO(jxm): is this right? :/
         # Compute loss across both axes.
         loss_a = torch.nn.functional.cross_entropy(audio_to_chord_sim, labels)
-        loss_n = torch.nn.functional.cross_entropy(chord_to_audio_sim, labels.T)
+        loss_n = torch.nn.functional.cross_entropy(chord_to_audio_sim, labels)
         loss = (loss_a + loss_n)/2
         return loss, (loss_a, loss_n, audio_to_chord_sim)

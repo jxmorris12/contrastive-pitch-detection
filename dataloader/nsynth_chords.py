@@ -11,7 +11,8 @@ VALID_PATH = '/home/jxm3/research/transcription/nsynth-chords/nsynth-keyboard-ch
 # VALID_PATH = TEST_PATH # tmp (deleteme!)
 # TRAIN_PATH = TEST_PATH # tmp (deleteme!)
 
-def load_nsynth_chords(split='train', tiny=False):
+def load_nsynth_chords(split='train', tiny=False, take_first_n_seconds=2):
+    print(f'loading nsynth_chords from disk, split {split}, take_first_n_seconds={take_first_n_seconds}')
     if split == 'train':
         raw_data = pickle.load(open(TRAIN_PATH, 'rb'))
     elif split == 'valid':
@@ -24,6 +25,11 @@ def load_nsynth_chords(split='train', tiny=False):
     data = []
     for item in raw_data:
         raw_waveform = item['audio']
+
+
+        if take_first_n_seconds:
+            new_length = SAMPLE_RATE * take_first_n_seconds
+            raw_waveform = raw_waveform[:new_length]
 
         new_sample = AnnotatedAudioChunk(
             0, len(raw_waveform), 

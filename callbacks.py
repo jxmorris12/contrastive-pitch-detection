@@ -220,6 +220,7 @@ class VisualizePredictionsCallback(Callback):
         # TODO(jxm): Since we switched to pytorch, this isn't necessary. We should re-use the predictions!
         rand_idxs = random.sample(range(len(self.val_generator)), self.num_val_batches)
         x, y_true, y_pred, frame_info = [], [], [], []
+        self.model.eval()
         for idx in rand_idxs:
             x_batch, y_true_batch, frame_info_batch = self.val_generator.__getitem__(idx, get_info=True)
             x_batch = x_batch[:self.num_validation_points]
@@ -233,6 +234,7 @@ class VisualizePredictionsCallback(Callback):
                 if self.args.contrastive:
                     predictions = self.model.get_probs(predictions)
             y_pred.append(predictions.cpu())
+        self.model.train()
         # Aggregate predictions from all batches
         x = np.vstack(x)
         y_true = np.vstack(y_true)

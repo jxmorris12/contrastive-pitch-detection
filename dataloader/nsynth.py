@@ -13,11 +13,13 @@ from .utils import midi_to_hz, AnnotatedAudioChunk, Track
 trim_silence = False
 # TODO(jxm): look up instrument numbers to enable other options
 INSTRUMENT_FAMILY_NUMS = { 'keyboard': 4 }
-def _load_nsynth(split, instrument=None) -> List[Track]:
+SAMPLE_RATE = 16_000 # this is constant for NSynth
+
+def _load_nsynth(split, instrument=None, take_first_n_seconds=2) -> List[Track]:
+    print(f'Loading nsynth from tfds, split {split}, instrument={instrument}, take_first_n_seconds={take_first_n_seconds}')
     import tensorflow_datasets as tfds
 
     assert split in {'train', 'test', 'valid'}
-    SAMPLE_RATE = 16_000 # this is constant for NSynth
 
     print(f'Loading NSynth split {split} and instrument {instrument}')
    
@@ -49,7 +51,11 @@ def _load_nsynth(split, instrument=None) -> List[Track]:
         # Trim leading and trailing silence.
         if trim_silence:
             raw_waveform, trimmed_region = librosa.effects.trim(raw_waveform, top_db=20)
-        # TODO Fake string and fret number?
+        
+        if take_first_n_seconds:
+            new_length = SAMPLE_RATE * take_first_n_seconds
+            raw_waveform = raw_waveform[:new_length]
+
         midi = data['pitch'].numpy()
         # 
         # 
