@@ -220,7 +220,7 @@ def main():
 
     print('training with optimizer Adam')
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=60, gamma=0.1)
     
     metrics = {
         'categorical_accuracy': categorical_accuracy,
@@ -364,7 +364,7 @@ def main():
             if args.contrastive and WANDB_ENABLED:
                 # Log train logits
                 train_chord_labels = [(r.nonzero().flatten() + args.min_midi).detach().cpu().tolist() for r in labels]
-                plt.figure(figsize=(15,13))
+                plt.figure(figsize=(36,30))
                 sns.heatmap(
                     torch.nn.functional.softmax(contrastive_logits, dim=1).detach().cpu(), 
                     xticklabels=train_chord_labels, yticklabels=train_chord_labels,
@@ -378,7 +378,7 @@ def main():
                 plt.close()
                 # Log val logits
                 val_chord_labels = [(r.nonzero().flatten() + args.min_midi).detach().cpu().tolist() for r in val_labels]
-                plt.figure(figsize=(15,13))
+                plt.figure(figsize=(36,30))
                 sns.heatmap(
                     torch.nn.functional.softmax(val_contrastive_logits, dim=1).detach().cpu(),
                     xticklabels=val_chord_labels, yticklabels=val_chord_labels,

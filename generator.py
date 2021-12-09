@@ -1,6 +1,7 @@
 from typing import List, Union, Tuple
 
 import collections
+import functools
 import pickle
 import random
 
@@ -45,7 +46,7 @@ class AudioDataGenerator(torch.utils.data.Dataset):
         if num_fake_nsynth_chords:
             print(f'Replacing {len(tracks)} tracks with {num_fake_nsynth_chords} fake NSynth chords')
             tracks = NSynthChordFakeTrackList(
-                num_fake_nsynth_chords, batch_size, sample_rate, frame_length,
+                num_fake_nsynth_chords, batch_size, sample_rate, frame_length, max_polyphony,
                 min_midi=min_midi, max_midi=max_midi
             )
         self.track_sampler = TrackFrameSampler(tracks, frame_length, batch_size, 
@@ -113,7 +114,7 @@ class NSynthChordFakeTrackList:
     """Generates data by adding NSynth notes together to make chords."""
     
     def __init__(self, num_chords_per_epoch: int, batch_size: int,
-            sample_rate: int, frame_length: int,
+            sample_rate: int, frame_length: int, max_polyphony: float,
             min_midi: int, max_midi: int,
             random_chords=True # Either random chords or top-K chords (calculated from MAESTRO dataset)
         ):
@@ -121,6 +122,7 @@ class NSynthChordFakeTrackList:
         self.batch_size = batch_size
         self.min_midi = min_midi
         self.max_midi = max_midi
+        self.max_polyphony = max_polyphony
         tracks = MusicDataLoader(sample_rate, frame_length, 
             # datasets=['nsynth_train'],
             datasets=['nsynth_keyboard_train'],
@@ -175,6 +177,33 @@ class NSynthChordFakeTrackList:
             name=chord_track_name
         )
 
+    @functools.cached_property
+    def _valid_note_nums(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Valid numbers of notes for generation and their probabilities."""
+        notes = np.array([1,2,3,4,5,6])
+        # geometric p=0.5
+        note_probs = np.array([0.5, 0.25, 0.125, 0.0625, 0.03125, 0.03125])
+        # geometric p=0.8
+        # note_probs = np.array([0.8000512032770098, 0.16001024065540193, 0.03200204813108038, 0.006400409626216074, 0.0012800819252432147, 0.00025601638504864284])
+        # uniform
+        # note_probs = np.array([0.166666666666666, 0.166666666666666, 0.166666666666666, 0.166666666666666, 0.166666666666666, 0.166666666666666])
+
+        # Remove potential chords with too many notes according to the `max_polyphony` argument
+        notes_valid = notes <= self.max_polyphony
+        notes = notes[notes_valid]
+        note_probs = note_probs[notes_valid]
+        note_probs = note_probs / note_probs.sum() # Normalize to form a probability distribution
+        return notes, note_probs
+
+    def _sample_random_num_notes(self) -> int:
+        """Samples a random number of notes to generate a chord.
+        
+        Will adjust number of available notes to respect the `max_polyphony` argument.
+        Depends on 
+        """
+        notes, note_probs = self._valid_note_nums
+        return np.random.choice(notes, p=note_probs)
+
     def __getitem__(self, i) -> Track:
         """ Returns the chord at index <i>. These chords are typically batched by the TrackFrameSampler."""
         # Choose a note to get chords for at each index
@@ -182,21 +211,15 @@ class NSynthChordFakeTrackList:
         if self.chords_to_sample_from:
             # print(f'* * * NSynthChordFakeTrackList using {len(self.chords_to_sample_from)} chords')
             # num_notes = np.random.choice([1,2,3,4,5,6])
-            num_notes = np.random.choice([1,2,3,4,5,6], p=[0.5, 0.25, 0.125, 0.0625, 0.03125, 0.03125])
+            num_notes = self._sample_random_num_notes()
             midis = random.choice(self.chords_to_sample_from[num_notes])
         elif self.random_chords:
             # print(f'* * * NSynthChordFakeTrackList generating random chords')
             # TODO(jxm): add argparse/settings that control flags, like the geometric dist on notes here
             # TODO(jxm): choose max polyphony based on args.max_polyphony argument
             #
-            # geometric p=0.5
-            num_notes = np.random.choice([1,2,3,4,5,6], p=[0.5, 0.25, 0.125, 0.0625, 0.03125, 0.03125])
+            num_notes = self._sample_random_num_notes()
             #
-            # geometric p=0.8
-            # num_notes = np.random.choice([1,2,3,4,5,6], p=[0.8000512032770098, 0.16001024065540193, 0.03200204813108038, 0.006400409626216074, 0.0012800819252432147, 0.00025601638504864284])
-            #
-            # uniform
-            # num_notes = np.random.choice([1,2,3,4,5,6])
             batch_midi_idxs = np.random.choice(self._midi_span, size=num_notes, p=self._midi_probs)
             midis = [m for m in self._midis[batch_midi_idxs] if m > 0]
         else:
