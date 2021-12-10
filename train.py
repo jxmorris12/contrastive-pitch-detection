@@ -32,6 +32,22 @@ num_cpus = len(os.sched_getaffinity(0)) # ask the OS how many cpus we have (stac
 # if we're not gonna log anything to W&B.
 WANDB_ENABLED = wandb.setup().settings.mode != "disabled"
 
+class _CustomDataParallel(torch.nn.Module):
+    """Instance of nn.DataParallel that respects properties like `self.xx`."""
+    def __init__(self, model):
+        super(_CustomDataParallel, self).__init__()
+        self.model = torch.nn.DataParallel(model).cuda()
+        print(type(self.model))
+
+    def forward(self, *input):
+        return self.model(*input)
+
+    def __getattr__(self, name):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.model.module, name)
+
 def set_random_seed(r):
     random.seed(r)
     np.random.seed(r)
@@ -49,7 +65,7 @@ def parse_args():
     parser.add_argument('--num_fake_nsynth_chords', type=int, default=0,
         help='number of fake NSynth chord tracks to include. Will over-write train set!')
     parser.add_argument('--model', type=str, default='bytedance_tiny', help='model to use for training',
-        choices=('crepe_tiny', 'crepe_full', 'bytedance', 'bytedance_tiny', 's4'))
+        choices=('crepe_tiny', 'crepe_full', 'crepe_large', 'crepe_medium', 'crepe_small', 'bytedance', 'bytedance_tiny', 's4'))
     parser.add_argument('--model_weights', type=str, default=None, help='path to model weights to load')
     parser.add_argument('--randomize_val_and_training_data', '--rvatd', default=False,
         action='store_true', help='shuffle validation and training data')
@@ -62,14 +78,13 @@ def parse_args():
         help='If specified, will filter out frames with greater than this number of notes')
     parser.add_argument('--epochs_per_model_save', default=3, 
         type=int, help='number of epochs between model saves')
-    parser.add_argument('--n_gpus', default=1, 
-        type=int, help='distributes the model acros ``n_gpus`` GPUs')
+    parser.add_argument('--min_midi', default=21, 
+        type=int, help='minimum MIDI value for train and evaluation data (inclusive)')
+    parser.add_argument('--max_midi', default=108, 
+        type=int, help='maximum MIDI value for train and evaluation data (inclusive)')
     
     args = parser.parse_args()
-    args.min_midi = 21  # Bottom of piano
-    args.max_midi = 108 # Top of piano
-
-    assert args.n_gpus == 1, "multi-GPU training not supported yet"
+    assert args.max_midi > args.min_midi
     
     assert args.min_midi < args.max_midi, "Must provide a positive range of MIDI values where max_midi > min_midi"
     set_random_seed(args.random_seed)
@@ -77,8 +92,7 @@ def parse_args():
     return args
 
 def get_model(args):
-    # TODO(jxm): support nn.DataParallel here
-    num_output_nodes = 256 if args.contrastive else 88
+    num_output_nodes = 256 if args.contrastive else (args.max_midi - args.min_midi + 1)
     if args.contrastive:
         out_activation = None
     else:
@@ -100,6 +114,27 @@ def get_model(args):
     elif args.model == 'crepe_tiny':
         model = CREPE(
             model='tiny',
+            num_output_nodes=num_output_nodes,
+            load_pretrained=False,
+            out_activation=out_activation
+        )
+    elif args.model == 'crepe_small':
+        model = CREPE(
+            model='small',
+            num_output_nodes=num_output_nodes,
+            load_pretrained=False,
+            out_activation=out_activation
+        )
+    elif args.model == 'crepe_medium':
+        model = CREPE(
+            model='medium',
+            num_output_nodes=num_output_nodes,
+            load_pretrained=False,
+            out_activation=out_activation
+        )
+    elif args.model == 'crepe_large':
+        model = CREPE(
+            model='large',
             num_output_nodes=num_output_nodes,
             load_pretrained=False,
             out_activation=out_activation
@@ -138,6 +173,11 @@ def get_model(args):
                 supervised_keys, strict=False)
         print('*** loaded model weights, missing_keys =', missing_keys)
         print('*** loaded model weights, unexpected_keys =', unexpected_keys)
+
+    # Distribute training across multiple GPUs
+    if torch.cuda.device_count() > 1:
+        print(f'torch.nn.DataParallel distributing training across {torch.cuda.device_count()} GPUs')
+        model = _CustomDataParallel(model)
 
     return model
     
@@ -309,7 +349,7 @@ def main():
         for name, metric in metrics.items():
             running_averages.update(f'train_{name}', metric(output, labels))
         # Update progress bar with epoch and loss.
-        pbar.set_description(f'Training / Epoch {epoch} / Loss = {loss.item():.4f}')
+        pbar.set_description(f'Training / Step {step} / Epoch {epoch} / Loss = {loss.item():.4f}')
         # Post-epoch callbacks.
         if (step+1) % log_interval == 0:
             # Log train metrics.
@@ -328,7 +368,7 @@ def main():
             wandb.log(train_metrics_dict)
             # Compute validation metrics.
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
-            max_num_val_batches = max(1024 // args.batch_size, 1)
+            max_num_val_batches = max(4096 // args.batch_size, 1)
             model.eval()
             for val_batch_idx, val_batch in enumerate(val_generator):
                 if val_batch_idx >= max_num_val_batches: 

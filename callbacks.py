@@ -150,10 +150,23 @@ class VisualizePredictionsCallback(Callback):
         })
 
     def _log_instance_level_metrics(self, epoch, step, x, y_true, y_pred, frame_info, max_instance_level_plots=128):
-        table_columns = [
-            'dataset', 'track', 'start_time', 'end_time', 
-            'waveform', 'spectrogram', 'logmel', 'preds', 'pred_labels', 'true_labels', 
-            'pred_type']
+        try:
+            spectrograms = self.spectrogram_extractor(torch.tensor(x))
+            logmels = self.logmel_extractor(spectrograms)
+            table_columns = [
+                'dataset', 'track', 'start_time', 'end_time', 
+                'waveform', 'spectrogram', 'logmel', 'preds', 'pred_labels', 'true_labels', 
+                'pred_type']
+        except:
+            # This doesn't work if frame inputs are too short. 
+            # TODO(jxm): change spectrogram extractor params to work with small inputs.
+            spectrograms = None
+            logmels = None
+
+            table_columns = [
+                'dataset', 'track', 'start_time', 'end_time', 
+                'waveform', 'preds', 'pred_labels', 'true_labels', 
+                'pred_type']
         table = wandb.Table(table_columns)
         pred_types = {}
         for pred_type in [
@@ -166,8 +179,6 @@ class VisualizePredictionsCallback(Callback):
             ]: pred_types[pred_type] = 0
         # Print instance-level add metrics (like precision and accuracy)
         n = 0
-        spectrograms = self.spectrogram_extractor(torch.tensor(x))
-        logmels = self.logmel_extractor(spectrograms)
         for waveform, true_labels, preds, frame_info in tqdm.tqdm(
                 zip(x, y_true, y_pred, frame_info), 
                 desc=f'VisualizePredictionsCallback ({self.str_prefix.strip("_")}) plotting and logging instance-level metrics',
@@ -182,8 +193,9 @@ class VisualizePredictionsCallback(Callback):
             ]
             # row.append(self._plot_waveform(waveform))
             row.append(wandb.Audio(waveform, sample_rate=self.args.sample_rate))
-            row.append(wandb.Image(spectrograms[n-1].numpy().squeeze()))
-            row.append(wandb.Image(logmels[n-1].numpy().squeeze()))
+            if (spectrograms is not None) and (logmels is not None):
+                row.append(wandb.Image(spectrograms[n-1].numpy().squeeze()))
+                row.append(wandb.Image(logmels[n-1].numpy().squeeze()))
             row.append(self._plot_preds(preds))
             pred_midis = self.args.min_midi + preds.round().nonzero()[0]
             row.append(str(pred_midis))

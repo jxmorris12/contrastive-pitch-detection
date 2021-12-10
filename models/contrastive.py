@@ -62,12 +62,12 @@ class ContrastiveModel(nn.Module):
         """Returns label for a single audio waveform, found with beam search."""
         # TODO support beam width > 1?
         cos_sim = functools.partial(torch.nn.functional.cosine_similarity, dim=1)
-        best_labels = torch.zeros((88))
+        best_labels = torch.zeros((self.num_labels))
         zero_label_encoding = self.encode_note_labels(best_labels[None].to(self.device))
         best_overall_sim = cos_sim(audio_embedding.squeeze(), zero_label_encoding).item()
         for _ in range(1, self.max_polyphony+1):
-            new_labels = best_labels.repeat((88,1))
-            new_notes = torch.eye(88)
+            new_labels = best_labels.repeat((self.num_labels,1))
+            new_notes = torch.eye(self.num_labels)
             new_labels = torch.maximum(new_notes, new_labels) # 88 tensors, each one has a new 1 at a different position
             label_encodings = self.encode_note_labels(new_labels.to(self.device))
             cos_sims = cos_sim(audio_embedding, label_encodings)
@@ -121,7 +121,7 @@ class ContrastiveModel(nn.Module):
         chord_to_audio_sim = audio_to_chord_sim.T
         # Compute labels when there may be duplicates.
         labels = (note_labels[:,None] == note_labels).all(2).type(torch.float32)
-        labels = labels / labels.sum(1) # TODO(jxm): is this right? :/
+        labels = labels / labels.sum(1)
         # Compute loss across both axes.
         loss_a = torch.nn.functional.cross_entropy(audio_to_chord_sim, labels)
         loss_n = torch.nn.functional.cross_entropy(chord_to_audio_sim, labels)
