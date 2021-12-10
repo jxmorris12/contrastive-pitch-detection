@@ -1,3 +1,5 @@
+from typing import List
+
 import functools
 import math
 import methodtools
@@ -112,7 +114,7 @@ class Track:
         
         It detects which samples overlap in a given audio sample.
     """
-    def __init__(self, dataset_name, track_name, samples, waveform, sample_rate, name=None):
+    def __init__(self, dataset_name: str, track_name: str, audio_chunks: List[AnnotatedAudioChunk], waveform: np.ndarray, sample_rate: int, name=None):
         """ ``samples`` is a List<AnnotatedAudioChunk>
         
         See https://github.com/brentp/interlap
@@ -126,44 +128,54 @@ class Track:
         self.start_idxs = []
         self.end_idxs = []
         self.name = name
-        for sample in samples:
-            start_idx, end_idx = sample.start_idx, sample.end_idx
+        self.all_frequencies = set()
+        for chunk in audio_chunks:
+            start_idx, end_idx = chunk.start_idx, chunk.end_idx
             self.start_idxs.append(start_idx)
             self.end_idxs.append(end_idx)
-            self.interval.add((start_idx, end_idx, sample))
+            self.interval.add((start_idx, end_idx, chunk))
+            self.all_frequencies.update(set(chunk.frequencies))
+
+    @property
+    def all_midis(self) -> List[int]:
+        return [hz_to_midi(f) for f in self.all_frequencies]
+
+    def all_midis_in_bounds(self, min_midi: int, max_midi: int) -> bool:
+        """Returns true if `self.all_midis` is fully contained between min_midi and max_midi (inclusive)."""
+        return all((min_midi <= midi <= max_midi for midi in self.all_midis))
     
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.waveform)
         
-    def num_frames(self, frame_length):
+    def num_frames(self, frame_length: int) -> int:
         return len(self) // frame_length
     
-    def resample(self, new_sample_rate):
+    def resample(self, new_sample_rate: int):
         """ Resamples ``self.waveform`` to specified sampling rate. """
         if new_sample_rate == self.sample_rate:
             return
         data = self.waveform
-        number_of_samples = round(len(data) * float(new_sample_rate) / self.sample_rate)
-        self.waveform = sps.resample(data, number_of_samples)
+        number_of_chunks = round(len(data) * float(new_sample_rate) / self.sample_rate)
+        self.waveform = sps.resample(data, number_of_chunks)
         self.sample_rate = new_sample_rate
     
     @methodtools.lru_cache()
-    def get_frequencies_from_offset(self, interval_start_idx, interval_end_idx, min_presence=0.5):
+    def get_frequencies_from_offset(self, interval_start_idx: int, interval_end_idx: int, min_presence=0.5) -> List[int]:
         """ Returns the frequencies present between index ``start_idx`` and ``end_idx``. """
-        # Find samples in scaled interval
+        # Find chunks in scaled interval
         frame_length = interval_end_idx - interval_start_idx
         scaled_interval_start = math.floor(self.original_sample_rate / self.sample_rate * interval_start_idx)
         scaled_interval_end = math.ceil(self.original_sample_rate / self.sample_rate * interval_end_idx)
-        samples_in_interval = list(
+        chunks_in_interval = list(
             self.interval.find((scaled_interval_start + 1e-8, scaled_interval_end - 1e-8))
         )
-        samples = []
-        for start_idx, end_idx, sample in samples_in_interval:
+        chunks = []
+        for start_idx, end_idx, chunk in chunks_in_interval:
             span = min(end_idx, scaled_interval_end) - max(start_idx, scaled_interval_start)
             if span / frame_length >= min_presence:
-                samples.append(sample)
-        if len(samples):
-            merged_chunk = AnnotatedAudioChunk.merge_samples(samples)
+                chunks.append(chunk)
+        if len(chunks):
+            merged_chunk = AnnotatedAudioChunk.merge_samples(chunks)
             return merged_chunk.frequencies
         else:
             return []

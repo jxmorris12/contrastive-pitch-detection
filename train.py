@@ -213,6 +213,9 @@ def main():
         batch_by_track=False, val_split=0.0
     )
     val_tracks = val_data_loader.load()
+    original_num_val_tracks = len(val_tracks)
+    val_tracks = [t for t in val_tracks if t.all_midis_in_bounds(args.min_midi, args.max_midi)]
+    print(f'*** Filtered {original_num_val_tracks} to {len(val_tracks)} tracks ({len(val_tracks)/original_num_val_tracks*100:.2f}%) with min_midi {args.min_midi} and max_midi {args.max_midi}')
 
     if args.randomize_val_and_training_data:
         print('Shuffling val and train tracks')
@@ -325,6 +328,7 @@ def main():
                 print(f'Model saved to {checkpoint_path}')
         # Get data and predictions.
         (data, labels) = train_generator[step % len(train_generator)]
+        breakpoint()
         data, labels = data.to(device), labels.to(device)
         output = model(data)
         # Compute loss and backpropagate.
