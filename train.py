@@ -328,7 +328,6 @@ def main():
                 print(f'Model saved to {checkpoint_path}')
         # Get data and predictions.
         (data, labels) = train_generator[step % len(train_generator)]
-        breakpoint()
         data, labels = data.to(device), labels.to(device)
         output = model(data)
         # Compute loss and backpropagate.
@@ -336,6 +335,7 @@ def main():
             loss, (loss_a, loss_n, contrastive_logits) = model.contrastive_loss(output, labels)
         else:
             loss = torch.nn.functional.binary_cross_entropy(output, labels)
+
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -372,7 +372,7 @@ def main():
             wandb.log(train_metrics_dict)
             # Compute validation metrics.
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
-            max_num_val_batches = max(4096 // args.batch_size, 1)
+            max_num_val_batches = max(8192 // args.batch_size, 1)
             model.eval()
             for val_batch_idx, val_batch in enumerate(val_generator):
                 if val_batch_idx >= max_num_val_batches: 
@@ -410,6 +410,7 @@ def main():
             wandb.log(val_metrics_dict)
             # Plot contrastive logits heatmaps.
             if args.contrastive and WANDB_ENABLED:
+                # TODO: instead, plot logits-labels so we can see where the errors actually are (much more interpretable!).
                 # Log train logits
                 train_chord_labels = [(r.nonzero().flatten() + args.min_midi).detach().cpu().tolist() for r in labels]
                 plt.figure(figsize=(36,30))
@@ -426,6 +427,7 @@ def main():
                 plt.close()
                 # Log val logits
                 val_chord_labels = [(r.nonzero().flatten() + args.min_midi).detach().cpu().tolist() for r in val_labels]
+                # TODO(jxm): these images are *way* too big, need to scale the axis font size down instead of scaling the image up!
                 plt.figure(figsize=(36,30))
                 sns.heatmap(
                     torch.nn.functional.softmax(val_contrastive_logits, dim=1).detach().cpu(),

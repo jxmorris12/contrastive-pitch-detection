@@ -1,7 +1,6 @@
 from typing import List, Union, Tuple
 
 import collections
-import functools
 import pickle
 import random
 
@@ -70,19 +69,14 @@ class AudioDataGenerator(torch.utils.data.Dataset):
         return len(self.track_sampler)
 
     def _get_track(self, i: int, get_info: bool) -> Tuple:
-        """Gets track `i`. Can be overridden by subclasses."""
-        if self.num_fake_nsynth_chords:
-            # If we're using the fake NSynth training data, we should update the NSynthChordFakeTrackList
-            # (which is self.track_sampler.tracks) so that it can generate a batch of fake chords with 
-            # neighbors.
-            # TODO(jxm): I really need to refactor, this part is getting bad.
-            # TODO(jxm): Choose number of notes in a more principled way.
-            random_note = np.random.choice(range(self.min_midi, self.max_midi+1))
-            self.track_sampler.tracks.chords_to_sample_from = note_and_neighbors(
-                random_note, self.min_midi, self.max_midi)
+        """Gets audio for batch `i`."""
         return self.track_sampler.__getitem__(i, get_info=get_info)
 
     def __getitem__(self, i: int, get_info=False):
+        """Gets batch `i` from `self.track_sampler`."""
+        if self.num_fake_nsynth_chords:
+            # TODO(jxm): refactor so this is all less hacky!
+            self.track_sampler.tracks.reset_for_next_batch()
         x, y, info = self._get_track(i, get_info)
         if self.augmenter:
             x = np.apply_along_axis(lambda w: self.augmenter(w, self.sample_rate), 1, x)
@@ -111,7 +105,10 @@ class AudioDataGenerator(torch.utils.data.Dataset):
         self.track_sampler.on_epoch_end()
 
 class NSynthChordFakeTrackList:
-    """Generates data by adding NSynth notes together to make chords."""
+    """Generates data by adding NSynth notes together to make chords.
+    
+    Then pretends to be a List[Track].
+    """
     
     def __init__(self, num_chords_per_epoch: int, batch_size: int,
             sample_rate: int, frame_length: int, max_polyphony: float,
@@ -157,6 +154,16 @@ class NSynthChordFakeTrackList:
     def _midi_span(self):
         """ The number of MIDI notes to sample from. """
         return (self.max_midi - self.min_midi + 1)
+    
+    def reset_for_next_batch(self):
+        """Resets stuff in between batches."""
+        # If we're using the fake NSynth training data, we should update the NSynthChordFakeTrackList
+        # (which is self.track_sampler.tracks) so that it can generate a batch of fake chords with 
+        # neighbors.
+        # TODO(jxm): I really need to refactor, this part is getting bad.
+        random_note = np.random.choice(range(self.min_midi, self.max_midi+1))
+        self.chords_to_sample_from = note_and_neighbors(
+            random_note, self.min_midi, self.max_midi)
 
     def _get_track_from_chord_midis(self, midis: Union[List[int], np.ndarray]) -> Track:
         tracks = [random.choice(self.notes_by_midi[m]) for m in midis]
@@ -177,7 +184,7 @@ class NSynthChordFakeTrackList:
             name=chord_track_name
         )
 
-    @functools.cached_property
+    @property
     def _valid_note_nums(self) -> Tuple[np.ndarray, np.ndarray]:
         """Valid numbers of notes for generation and their probabilities."""
         notes = np.array([1,2,3,4,5,6])
@@ -189,10 +196,18 @@ class NSynthChordFakeTrackList:
         # note_probs = np.array([0.166666666666666, 0.166666666666666, 0.166666666666666, 0.166666666666666, 0.166666666666666, 0.166666666666666])
 
         # Remove potential chords with too many notes according to the `max_polyphony` argument
-        notes_valid = notes <= self.max_polyphony
+        #
+        # Also remove numbers of notes that don't have any corresponding chords in
+        # self.chords_to_sample_from. This could happen if we're sampling without
+        # replacement and we sampled all the chords away.
+        notes_valid = np.logical_and(
+            (notes <= self.max_polyphony), 
+            np.array([n in self.chords_to_sample_from for n in notes])
+        )
         notes = notes[notes_valid]
         note_probs = note_probs[notes_valid]
         note_probs = note_probs / note_probs.sum() # Normalize to form a probability distribution
+
         return notes, note_probs
 
     def _sample_random_num_notes(self) -> int:
@@ -201,6 +216,10 @@ class NSynthChordFakeTrackList:
         Will adjust number of available notes to respect the `max_polyphony` argument.
         Depends on 
         """
+        if not self.chords_to_sample_from:
+            # This can only happen if we don't have enough neighbors returned from the neighbor_fn
+            # and the batch size is too high.
+            raise RuntimeError('Ran out of chords to sample from.')
         notes, note_probs = self._valid_note_nums
         return np.random.choice(notes, p=note_probs)
 
@@ -212,7 +231,12 @@ class NSynthChordFakeTrackList:
             # print(f'* * * NSynthChordFakeTrackList using {len(self.chords_to_sample_from)} chords')
             # num_notes = np.random.choice([1,2,3,4,5,6])
             num_notes = self._sample_random_num_notes()
+            # Sample a random note.
             midis = random.choice(self.chords_to_sample_from[num_notes])
+            # And sample without replacement.
+            self.chords_to_sample_from[num_notes].remove(midis)
+            if not len(self.chords_to_sample_from[num_notes]):
+                del self.chords_to_sample_from[num_notes]
         elif self.random_chords:
             # print(f'* * * NSynthChordFakeTrackList generating random chords')
             # TODO(jxm): add argparse/settings that control flags, like the geometric dist on notes here

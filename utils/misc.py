@@ -50,38 +50,57 @@ def midi_to_hz(d):
 
 FrameInfo = collections.namedtuple('FrameInfo', ['dataset_name', 'track_name', 'sample_rate', 'start_time', 'end_time'])
 
+
 def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=10):
-    neighbor_notes = [
-        note_midi - 24, # two octaves down
-        note_midi - 12, # octave down
-        note_midi + 12, # octave up
-        note_midi + 24, # two octaves up
-        note_midi - 1, # note off-by-one
-        note_midi + 1, # note off-by-one
-        note_midi - 4, # perfect third
-        note_midi + 4, # perfect third
-        note_midi + 7, # perfect fifth
-        note_midi - 7, # perfect fifth
-    ]
-    # all_other_notes = set(range(min_midi, max_midi+1)) - set(neighbor_notes)
-    all_other_notes = set(range(note_midi-12, note_midi+12)) - set(neighbor_notes)
-    all_other_notes = [n for n in all_other_notes if min_midi <= n <= max_midi]
-    neighbor_notes += random.sample(all_other_notes, min(num_random_notes, len(all_other_notes)))
-    neighbor_notes = [n for n in neighbor_notes if min_midi <= n <= max_midi] # filter out notes that are too high or low
-    one_note_chords = [[note_midi]] + [[n] for n in neighbor_notes]
-    two_note_chords = [[note_midi, n] for n in neighbor_notes]
-    three_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 2)]
-    four_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 3)]
-    five_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 4)]
-    six_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 5)]
+    # TODO(jxm): Split this into multiple functions or something.
+    # For now this is just returning all valid chords within two octaves
+    # of the base note!
+    all_notes = list(range(note_midi-12, note_midi+12+1))
+    all_notes = [n for n in all_notes if min_midi <= n <= max_midi]
+    one_note_chords = [[n] for n in all_notes]
+    two_note_chords = list(itertools.combinations(all_notes, 2))
+    three_note_chords = list(itertools.combinations(all_notes, 3))
     return { 
         1: one_note_chords,
         2: two_note_chords,
         3: three_note_chords,
-        4: four_note_chords,
-        5: five_note_chords,
-        6: six_note_chords,
+        # 4: four_note_chords,
+        # 5: five_note_chords,
+        # 6: six_note_chords,
     }
+
+# def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=10):
+#     neighbor_notes = [
+#         note_midi - 24, # two octaves down
+#         note_midi - 12, # octave down
+#         note_midi + 12, # octave up
+#         note_midi + 24, # two octaves up
+#         note_midi - 1, # note off-by-one
+#         note_midi + 1, # note off-by-one
+#         note_midi - 4, # perfect third
+#         note_midi + 4, # perfect third
+#         note_midi + 7, # perfect fifth
+#         note_midi - 7, # perfect fifth
+#     ]
+#     # all_other_notes = set(range(min_midi, max_midi+1)) - set(neighbor_notes)
+#     all_other_notes = set(range(note_midi-12, note_midi+12)) - set(neighbor_notes)
+#     all_other_notes = [n for n in all_other_notes if min_midi <= n <= max_midi]
+#     neighbor_notes += random.sample(all_other_notes, min(num_random_notes, len(all_other_notes)))
+#     neighbor_notes = [n for n in neighbor_notes if min_midi <= n <= max_midi] # filter out notes that are too high or low
+#     one_note_chords = [[note_midi]] + [[n] for n in neighbor_notes]
+#     two_note_chords = [[note_midi, n] for n in neighbor_notes]
+#     three_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 2)]
+#     four_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 3)]
+#     five_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 4)]
+#     six_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 5)]
+#     return { 
+#         1: one_note_chords,
+#         2: two_note_chords,
+#         3: three_note_chords,
+#         4: four_note_chords,
+#         5: five_note_chords,
+#         6: six_note_chords,
+#     }
 
 class TrackFrameSampler:
     """ Given a list of tracks of different lengths, how can you randomly
@@ -147,6 +166,11 @@ class TrackFrameSampler:
         # all have the same shape, which is dumb. Need to do this better somehow.
         self.track_frame_index_pairs = []
         for track_idx in range(len(self.tracks)):
+            if hasattr(self.tracks, 'reset_for_next_batch'):
+                # Ah, we shouldn't need to do this next line, it's an unfortunate
+                # result of the cruft in this codebase.
+                # TODO(jxm): refactor this away :-)
+                self.tracks.reset_for_next_batch()
             track = self.tracks[track_idx]
             for frame_idx in range(track.num_frames(self.frame_length)):
                 frequencies = track.get_frequencies_from_offset(frame_idx * self.frame_length, (frame_idx + 1) * self.frame_length)
