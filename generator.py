@@ -221,6 +221,11 @@ class NSynthChordFakeTrackList:
             # and the batch size is too high.
             raise RuntimeError('Ran out of chords to sample from.')
         notes, note_probs = self._valid_note_nums
+        if not len(notes):
+            # Ran out of notes to sample from, start recycling
+            self.reset_for_next_batch()
+            # Recursively refill - watch out for infinite loops!!
+            return self._sample_random_num_notes()
         return np.random.choice(notes, p=note_probs)
 
     def __getitem__(self, i) -> Track:

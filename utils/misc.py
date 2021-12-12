@@ -9,6 +9,7 @@ import random
 
 import numpy as np
 import torch
+import tqdm
 
 def midi_vals_to_categorical(midi_values, min_midi, max_midi):
     """ Converts a list of float midi values to a single categorical vector. """
@@ -169,7 +170,7 @@ class TrackFrameSampler:
         # TODO(jxm): This only works with randomly generated data because the waveforms
         # all have the same shape, which is dumb. Need to do this better somehow.
         self.track_frame_index_pairs = []
-        for track_idx in range(len(self.tracks)):
+        for track_idx in tqdm.trange(len(self.tracks), desc='TrackFrameSampler counting frames'):
             if hasattr(self.tracks, 'reset_for_next_batch'):
                 # Ah, we shouldn't need to do this next line, it's an unfortunate
                 # result of the cruft in this codebase.
