@@ -74,9 +74,11 @@ class AudioDataGenerator(torch.utils.data.Dataset):
 
     def __getitem__(self, i: int, get_info=False):
         """Gets batch `i` from `self.track_sampler`."""
+        print('getting batch', i)
         if self.num_fake_nsynth_chords:
             # TODO(jxm): refactor so this is all less hacky!
             self.track_sampler.tracks.reset_for_next_batch()
+            
         x, y, info = self._get_track(i, get_info)
         if self.augmenter:
             x = np.apply_along_axis(lambda w: self.augmenter(w, self.sample_rate), 1, x)
@@ -113,7 +115,8 @@ class NSynthChordFakeTrackList:
     def __init__(self, num_chords_per_epoch: int, batch_size: int,
             sample_rate: int, frame_length: int, max_polyphony: float,
             min_midi: int, max_midi: int,
-            random_chords=True # Either random chords or top-K chords (calculated from MAESTRO dataset)
+            random_chords=True, # Either random chords or top-K chords (calculated from MAESTRO dataset)
+            sampling_with_replacement=False, # Whether a certain chord can be included in the batch twice
         ):
         self.num_chords_per_epoch = num_chords_per_epoch
         self.batch_size = batch_size
@@ -146,6 +149,9 @@ class NSynthChordFakeTrackList:
         # Stores the chords that can be sampled from if not random. TODO(jxm): refactor to do this better.
         self.chords_to_sample_from = {} # maps note_num -> midis, like { 1: [[14, 17, 20], ...], ...}
 
+        self.sampling_with_replacement = sampling_with_replacement
+        print('NSynthChordFakeTrackList sampling_with_replacement =', sampling_with_replacement)
+
     def __len__(self) -> int:
         """Denotes the number of batches per epoch."""
         return self.num_chords_per_epoch
@@ -164,6 +170,7 @@ class NSynthChordFakeTrackList:
         random_note = np.random.choice(range(self.min_midi, self.max_midi+1))
         self.chords_to_sample_from = note_and_neighbors(
             random_note, self.min_midi, self.max_midi)
+        # print('\t chords_to_sample_from:', {k: len(v) for k,v in self.chords_to_sample_from.items()})
 
     def _get_track_from_chord_midis(self, midis: Union[List[int], np.ndarray]) -> Track:
         tracks = [random.choice(self.notes_by_midi[m]) for m in midis]
@@ -219,13 +226,9 @@ class NSynthChordFakeTrackList:
         if not self.chords_to_sample_from:
             # This can only happen if we don't have enough neighbors returned from the neighbor_fn
             # and the batch size is too high.
+            breakpoint()
             raise RuntimeError('Ran out of chords to sample from.')
         notes, note_probs = self._valid_note_nums
-        if not len(notes):
-            # Ran out of notes to sample from, start recycling
-            self.reset_for_next_batch()
-            # Recursively refill - watch out for infinite loops!!
-            return self._sample_random_num_notes()
         return np.random.choice(notes, p=note_probs)
 
     def __getitem__(self, i) -> Track:
@@ -238,10 +241,15 @@ class NSynthChordFakeTrackList:
             num_notes = self._sample_random_num_notes()
             # Sample a random note.
             midis = random.choice(self.chords_to_sample_from[num_notes])
-            # And sample without replacement.
-            self.chords_to_sample_from[num_notes].remove(midis)
-            if not len(self.chords_to_sample_from[num_notes]):
-                del self.chords_to_sample_from[num_notes]
+            # And optionally sample without replacement.
+            if not self.sampling_with_replacement:
+                self.chords_to_sample_from[num_notes].remove(midis)
+                if not len(self.chords_to_sample_from[num_notes]):
+                    del self.chords_to_sample_from[num_notes]
+                if not self.chords_to_sample_from:
+                    # Ran out of notes to sample from, start recycling
+                    self.reset_for_next_batch()
+                    # Recursively refill - TODO(jxm): is this best practice?
         elif self.random_chords:
             # print(f'* * * NSynthChordFakeTrackList generating random chords')
             # TODO(jxm): add argparse/settings that control flags, like the geometric dist on notes here

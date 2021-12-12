@@ -51,6 +51,16 @@ def midi_to_hz(d):
 
 FrameInfo = collections.namedtuple('FrameInfo', ['dataset_name', 'track_name', 'sample_rate', 'start_time', 'end_time'])
 
+def combinations_2000(some_list, n):
+    """Returns up to 2000 combinations from some_list choose n.
+    """
+    combos = itertools.combinations(some_list, n)
+    i = 0
+    for combo in combos:
+        yield combo
+        i += 1
+        if i >= 2000:
+            return
 
 def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=10):
     # TODO(jxm): Split this into multiple functions or something.
@@ -59,12 +69,14 @@ def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=10):
     # TODO(jxm): six_note_chords will be huge here if min_midi << max_midi, what to do then?
     neighbor_notes = list(range(note_midi-12, note_midi)) + list(range(note_midi+1, note_midi+12))
     neighbor_notes = [n for n in neighbor_notes if min_midi <= n <= max_midi]
+    # Randomize the order of neighbor notes so that we get a random order of combinations.
+    random.shuffle(neighbor_notes)
     one_note_chords =  [[note_midi]] + [[n] for n in neighbor_notes]
     two_note_chords = [[note_midi, n] for n in neighbor_notes]
-    three_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 2)]
-    four_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 3)]
-    five_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 4)]
-    six_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 5)]
+    three_note_chords = [[note_midi] + list(chord) for chord in combinations_2000(neighbor_notes, 2)]
+    four_note_chords = [[note_midi] + list(chord) for chord in combinations_2000(neighbor_notes, 3)]
+    five_note_chords = [[note_midi] + list(chord) for chord in combinations_2000(neighbor_notes, 4)]
+    six_note_chords = [[note_midi] + list(chord) for chord in combinations_2000(neighbor_notes, 5)]
     return {
         1: one_note_chords,
         2: two_note_chords,
@@ -221,6 +233,7 @@ class TrackFrameSampler:
             track = self.tracks[track_idx]
             start_idx = frame_idx * self.frame_length
             if self.randomize_train_frame_offsets:
+                # TODO(jxm): Make sure this is OK.
                 # Note: By adding this random offset, we don't guarantee that
                 # the waveform length is greater than 'min_presence', nor that
                 # it contains any audible notes at all.

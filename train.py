@@ -379,7 +379,7 @@ def main():
             wandb.log(train_metrics_dict)
             # Compute validation metrics.
             logger.info('*** Computing validation metrics for epoch %d (step %d) ***', epoch, step)
-            max_num_val_batches = max(8192 // args.batch_size, 1)
+            max_num_val_batches = max(8192*2 // args.batch_size, 1)
             model.eval()
             for val_batch_idx, val_batch in enumerate(val_generator):
                 if val_batch_idx >= max_num_val_batches: 
