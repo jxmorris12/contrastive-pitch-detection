@@ -55,18 +55,22 @@ def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=10):
     # TODO(jxm): Split this into multiple functions or something.
     # For now this is just returning all valid chords within two octaves
     # of the base note!
-    all_notes = list(range(note_midi-12, note_midi+12+1))
-    all_notes = [n for n in all_notes if min_midi <= n <= max_midi]
-    one_note_chords = [[n] for n in all_notes]
-    two_note_chords = list(itertools.combinations(all_notes, 2))
-    three_note_chords = list(itertools.combinations(all_notes, 3))
-    return { 
+    # TODO(jxm): six_note_chords will be huge here if min_midi << max_midi, what to do then?
+    neighbor_notes = list(range(note_midi-12, note_midi)) + list(range(note_midi+1, note_midi+12))
+    neighbor_notes = [n for n in neighbor_notes if min_midi <= n <= max_midi]
+    one_note_chords =  [[note_midi]] + [[n] for n in neighbor_notes]
+    two_note_chords = [[note_midi, n] for n in neighbor_notes]
+    three_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 2)]
+    four_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 3)]
+    five_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 4)]
+    six_note_chords = [[note_midi] + list(chord) for chord in itertools.combinations(neighbor_notes, 5)]
+    return {
         1: one_note_chords,
         2: two_note_chords,
         3: three_note_chords,
-        # 4: four_note_chords,
-        # 5: five_note_chords,
-        # 6: six_note_chords,
+        4: four_note_chords,
+        5: five_note_chords,
+        6: six_note_chords,
     }
 
 # def note_and_neighbors(note_midi, min_midi, max_midi, num_random_notes=10):

@@ -9,8 +9,11 @@ class ContrastiveModel(nn.Module):
     embedding: nn.Embedding
     model: nn.Module
     batch_size: int
-    def __init__(self, model: nn.Module, min_midi: int, max_midi: int, output_dim: int,
-        max_polyphony: int, large_projection=True):
+    def __init__(self, 
+            model: nn.Module,
+            min_midi: int, max_midi: int,
+            output_dim: int, max_polyphony: int
+        ):
         super().__init__()
         assert 1 <= max_polyphony <= 6
         # From CLIP: "The learnable temperature parameter
@@ -26,21 +29,16 @@ class ContrastiveModel(nn.Module):
             self.num_labels, embedding_dim
         )
 
-        if large_projection:
-            self.embedding_proj = nn.Sequential(
-                nn.Linear(
-                    in_features=embedding_dim, out_features=embedding_dim*2
-                ),
-                nn.BatchNorm1d(embedding_dim*2),
-                nn.ReLU(),
-                nn.Linear(
-                    in_features=embedding_dim*2, out_features=output_dim
-                )
+        self.embedding_proj = nn.Sequential(
+            nn.Linear(
+                in_features=embedding_dim, out_features=embedding_dim*2
+            ),
+            nn.BatchNorm1d(embedding_dim*2),
+            nn.ReLU(),
+            nn.Linear(
+                in_features=embedding_dim*2, out_features=output_dim
             )
-        else:
-            self.embedding_proj = nn.Linear(
-                in_features=embedding_dim, out_features=output_dim
-            )
+        )
         torch.nn.init.xavier_uniform_(self.embedding.weight)
         self.model = model
         self.max_polyphony = max_polyphony
@@ -81,7 +79,7 @@ class ContrastiveModel(nn.Module):
                 break
         return best_labels.to(self.device)
 
-    def get_probs(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.002, lr=10.0) -> torch.Tensor:
+    def get_probs(self, audio_embeddings: torch.Tensor, n_steps=20, epsilon = 0.00) -> torch.Tensor:
         """Returns note-wise probabilities for an audio input.
         
         Works by doing beam search to find the label to maximize the similarity
@@ -123,7 +121,9 @@ class ContrastiveModel(nn.Module):
         labels = (note_labels[:,None] == note_labels).all(2).type(torch.float32)
         labels = labels / labels.sum(1)
         # Compute loss across both axes.
-        loss_a = torch.nn.functional.cross_entropy(audio_to_chord_sim, labels)
-        loss_n = torch.nn.functional.cross_entropy(chord_to_audio_sim, labels)
+        loss_a = torch.nn.functional.binary_cross_entropy(
+            torch.nn.functional.softmax(audio_to_chord_sim, 0), labels)
+        loss_n = torch.nn.functional.binary_cross_entropy(
+            torch.nn.functional.softmax(chord_to_audio_sim, 0), labels)
         loss = (loss_a + loss_n)/2
         return loss, (loss_a, loss_n, audio_to_chord_sim)

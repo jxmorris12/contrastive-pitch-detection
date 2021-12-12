@@ -74,7 +74,7 @@ def parse_args():
         help="Whether to add some randomness to frame offsets for training data")
     parser.add_argument('--contrastive', default=False, 
         action='store_true', help='train with contrastive loss')
-    parser.add_argument('--max_polyphony', type=int, default=6, choices=list(range(6)),
+    parser.add_argument('--max_polyphony', type=int, default=6, choices=list(range(7)),
         help='If specified, will filter out frames with greater than this number of notes')
     parser.add_argument('--epochs_per_model_save', default=3, 
         type=int, help='number of epochs between model saves')
@@ -282,7 +282,7 @@ def main():
     #
     # callbacks
     #
-    time_str = time.strftime("%Y%m%d-%H%M%S")
+    time_str = time.strftime("%Y%m%d-%H%M%S.%f")
     model_folder = os.path.join('outputs', f'{args.model}-{time_str}')
     pathlib.Path(model_folder).mkdir(parents=True, exist_ok=True)
     print(f'Saving args & model to {model_folder}')
@@ -295,9 +295,16 @@ def main():
     if WANDB_ENABLED:
         wandb.watch(model)
         # only compute this stuff if w&b is not disabled
-        callbacks.append(VisualizePredictionsCallback(args, model, val_generator, str_prefix='val_'))
+        # TODO(jxm): reuse val predictions instead of recomputing them
+        callbacks.append(
+            VisualizePredictionsCallback(
+                args, model, val_generator, str_prefix='val_', num_validation_points=64)
+            )
         # TODO(jxm): Reuse train predictions instead of recomputing them
-        callbacks.append(VisualizePredictionsCallback(args, model, train_generator, str_prefix='train_'))
+        callbacks.append(
+            VisualizePredictionsCallback(
+                args, model, train_generator, str_prefix='train_', num_validation_points=32)
+            )
         if args.contrastive:
             callbacks.append(LogNoteEmbeddingStatisticsCallback(model))
     
